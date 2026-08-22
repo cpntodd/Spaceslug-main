@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spaceslug.local/schemas/artifact-manifest.schema.json",
+  "title": "Spaceslug artifact manifest",
+  "type": "object",
+  "required": ["schema_version", "model_id", "architecture", "tokenizer", "tensors", "provenance"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "model_id": {"type": "string", "minLength": 1},
+    "architecture": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}, "additionalProperties": true},
+    "tokenizer": {"type": "object", "required": ["path", "vocab_size"], "properties": {"path": {"type": "string"}, "vocab_size": {"type": "integer", "minimum": 1}}, "additionalProperties": true},
+    "tensors": {"type": "object"},
+    "quantization": {"type": "object"},
+    "provenance": {"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}, "additionalProperties": true}
+  },
+  "additionalProperties": false
+}

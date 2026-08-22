@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spaceslug.local/schemas/experiment.schema.json",
+  "title": "Spaceslug experiment record",
+  "type": "object",
+  "required": ["experiment_id", "parent_model", "code_revision", "dataset_revision", "budget", "metrics", "status"],
+  "properties": {
+    "experiment_id": {"type": "string", "minLength": 1},
+    "parent_model": {"type": "string", "minLength": 1},
+    "code_revision": {"type": "string", "minLength": 1},
+    "dataset_revision": {"type": "string", "minLength": 1},
+    "config": {"type": "object"},
+    "hardware": {"type": "object"},
+    "budget": {"type": "object", "required": ["seconds"], "properties": {"seconds": {"type": "integer", "minimum": 1}, "steps": {"type": "integer", "minimum": 0}}, "additionalProperties": true},
+    "metrics": {"type": "object"},
+    "resource": {"type": "object"},
+    "status": {"enum": ["running", "kept", "rejected", "failed", "cancelled"]}
+  },
+  "additionalProperties": false
+}

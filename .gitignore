@@ -1,0 +1,38 @@
+# Build and runtime
+build/
+out/
+.cache/
+*.log
+
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+
+# GUI
+node_modules/
+dist/
+
+# Local artifacts and experiment outputs
+artifacts/
+checkpoints/
+experiments/runs/
+# Large dataset bundles are published externally; keep manifests and fixtures tracked.
+*.dts.tar.zst
+*.dts/
+*.safetensors
+*.bin
+*.weights
+*.cact
+*.spaceslug
+
+# Local databases and secrets
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

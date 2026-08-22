@@ -1,0 +1,224 @@
+{
+  "main": {
+    "id": "58e4621a001cbc60",
+    "type": "split",
+    "children": [
+      {
+        "id": "0b2a3fcfd09595aa",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "11893ae6ad3129ef",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "experiments/README.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "README"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "298283bba3ecb126",
+    "type": "split",
+    "children": [
+      {
+        "id": "c9f3bb773431ad99",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "dbddf27ec6612129",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "9c63436472fd46f9",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "5d0d1f1e9f01856b",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "022ed0f54336942c",
+    "type": "split",
+    "children": [
+      {
+        "id": "a57f82786d40d295",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "2d0d62f1dba817ef",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "experiments/README.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "a72f10129cedf97b",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "experiments/README.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "5cd4830f01d167cb",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "7f99a4cee131e88f",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "24d39c3100ea3dcb",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "experiments/README.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "11893ae6ad3129ef",
+  "lastOpenFiles": [
+    "docs/SELF_IMPROVEMENT.md",
+    "README.md",
+    "docs/devlog/0002-dataset-bundle-and-measurement-policy.md",
+    "docs/devlog/0003-backend-integration-baseline.md",
+    "docs/INTEGRATION.md",
+    "docs/devlog/0001-repository-and-contract-baseline.md",
+    "docs/DEVLOG.md",
+    "docs/DECISIONS.md",
+    "experiments/README.md",
+    "benchmarks/README.md",
+    "datasets/README.md",
+    "docs/REPRODUCIBILITY.md",
+    "schemas/dataset-manifest.schema.json",
+    "docs/DATASETS.md",
+    "docs/TRAINING.md",
+    "docs/devlog",
+    "manifests",
+    "benchmarks",
+    "datasets/samples",
+    "datasets/manifests",
+    "datasets",
+    "docs/ROADMAP.md",
+    "docs/PRODUCT.md",
+    "docs/MOE.md",
+    "docs/GUI.md",
+    "docs/ARTIFACT_FORMAT.md",
+    "docs/ARCHITECTURE.md",
+    "CONTRIBUTING.md",
+    "schemas/artifact-manifest.schema.json",
+    "schemas/experiment.schema.json"
+  ]
+}
