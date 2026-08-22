@@ -23,7 +23,12 @@ class BackendSmokeTest(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.operation, "vector_add")
         self.assertFalse(result.fallback_used)
-        self.assertTrue(result.output["runtime_report"].endswith("PASS"))
+        if (RUNTIME / "build/debug/libvulkan_runtime_api.so").is_file():
+            self.assertEqual(result.metrics["execution"], "native-shared-library")
+            self.assertEqual(result.output["first"], 3.0)
+            self.assertEqual(result.output["last"], 3.0)
+        else:
+            self.assertTrue(result.output["runtime_report"].endswith("PASS"))
         self.assertEqual(vector_add([0.25, 1.5], [0.75, 2.5]), [1.0, 4.0])
         self.assertGreater(result.metrics["host_elapsed_seconds"], 0.0)
         self.assertFalse(result.metrics["software_vulkan"])
