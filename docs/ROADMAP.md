@@ -18,7 +18,7 @@ Expose the existing Spaceslug runtime through a stable asynchronous backend inte
 
 Implement the `.dts` manifest and bundle contracts, deterministic record normalization, checksum verification, dataset lineage, protected benchmark references, experiment metadata, and the first devlog/reporting workflow.
 
-**Progress:** an initial dependency-free deterministic `.dts` directory writer/verifier and checksum tamper test are implemented. Tokenized derived shards, schema validation, and benchmark-overlap checks remain.
+**Progress:** an initial dependency-free deterministic `.dts` directory writer/verifier, manifest contract validation, checksum tamper test, and split statistics are implemented. Tokenized derived shards and benchmark-overlap checks remain.
 
 **Gate:** a small fixture round-trips byte-for-byte, reproduces pinned token IDs, verifies checksums, and produces a reproducible statistics report.
 
@@ -26,7 +26,7 @@ Implement the `.dts` manifest and bundle contracts, deterministic record normali
 
 Implement a tiny dense transformer, CPU reference backend, tokenizer contract, teacher-forced loss, checkpointing, and CLI chat/training.
 
-**Progress:** a dependency-free tiny CPU bigram reference model now supports teacher-forced next-token loss, gradient descent, and checkpoint save/reload. The dense transformer, tokenizer, and CLI remain.
+**Progress:** a dependency-free tiny CPU bigram reference model now supports teacher-forced next-token loss, resumable AdamW updates, checkpoint save/reload, and a minimal CLI. The dense transformer, tokenizer, and full training workflow remain.
 
 **Gate:** train, save, reload, and chat with Spaceslug-Tiny.
 
