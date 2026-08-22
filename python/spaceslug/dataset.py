@@ -21,6 +21,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def validate_manifest(manifest: dict) -> None:
+    """Validate the stable subset of dataset-manifest.schema.json without extras."""
+    _require(manifest.get("format") == "spaceslug-dataset", "invalid dataset format")
+    _require(manifest.get("schema_version") == 1, "unsupported dataset schema version")
+    for field in ("dataset_id", "revision", "record_count", "splits", "encoding", "tokenizer", "preprocessing", "provenance", "files"):
+        _require(field in manifest, f"manifest missing {field}")
+    _require(isinstance(manifest["dataset_id"], str) and bool(manifest["dataset_id"]), "invalid dataset_id")
+    _require(isinstance(manifest["record_count"], int) and manifest["record_count"] >= 0, "invalid record_count")
+    _require(set(manifest["splits"]) == {"train", "validation", "test"}, "invalid splits")
+    _require(manifest["encoding"].get("text") == "utf-8", "invalid text encoding")
+    _require("id" in manifest["tokenizer"] and "revision" in manifest["tokenizer"], "invalid tokenizer")
+    _require("pipeline" in manifest["preprocessing"] and "revision" in manifest["preprocessing"], "invalid preprocessing")
+    _require(set(manifest["provenance"]) >= {"sources", "licenses"}, "invalid provenance")
+    _require(isinstance(manifest["files"], list) and bool(manifest["files"]), "manifest has no files")
+    for item in manifest["files"]:
+        _require(set(item) >= {"path", "sha256", "bytes"}, "invalid file entry")
+        _require(isinstance(item["bytes"], int) and item["bytes"] >= 0, "invalid file size")
+
+
 @dataclass(frozen=True)
 class DatasetBundle:
     root: Path
@@ -72,15 +96,12 @@ def create_bundle(
 
     (root / "source" / "sources.jsonl").write_bytes(b"".join(_json_bytes({"source": value}) for value in source_values))
     (root / "source" / "licenses.jsonl").write_bytes(b"".join(_json_bytes({"license": value}) for value in license_values))
-    (root / "preprocessing" / "config.json").write_bytes(_json_bytes({
-        "pipeline": preprocessing_pipeline, "revision": preprocessing_revision, "seed": seed
-    }))
+    (root / "preprocessing" / "config.json").write_bytes(_json_bytes({"pipeline": preprocessing_pipeline, "revision": preprocessing_revision, "seed": seed}))
 
     files = []
     for path in sorted(p for p in root.rglob("*") if p.is_file() and p.name != "manifest.json"):
         files.append({"path": str(path.relative_to(root)), "sha256": _sha256(path), "bytes": path.stat().st_size})
-    revision_input = b"".join(_json_bytes(item) for item in files)
-    revision = "sha256:" + hashlib.sha256(revision_input).hexdigest()
+    revision = "sha256:" + hashlib.sha256(b"".join(_json_bytes(item) for item in files)).hexdigest()
     manifest = {
         "format": "spaceslug-dataset", "schema_version": 1, "dataset_id": dataset_id,
         "revision": revision, "parent_revision": None, "record_count": sum(counts.values()),
@@ -91,6 +112,7 @@ def create_bundle(
         "provenance": {"sources": source_values, "licenses": license_values, "privacy_status": "unknown"},
         "files": files,
     }
+    validate_manifest(manifest)
     (root / "manifest.json").write_bytes(_json_bytes(manifest))
     (root / "checksums" / "sha256.json").write_bytes(_json_bytes({item["path"]: item["sha256"] for item in files}))
     return DatasetBundle(root, manifest)
@@ -99,11 +121,7 @@ def create_bundle(
 def verify_bundle(root: str | Path) -> DatasetBundle:
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("format") != "spaceslug-dataset" or manifest.get("schema_version") != 1:
-        raise ValueError("unsupported dataset bundle")
-    expected_splits = {"train", "validation", "test"}
-    if set(manifest.get("splits", {})) != expected_splits:
-        raise ValueError("dataset must declare train, validation, and test splits")
+    validate_manifest(manifest)
     bundle = DatasetBundle(root, manifest)
     for item in manifest["files"]:
         path = root / item["path"]

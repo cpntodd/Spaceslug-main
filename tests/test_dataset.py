@@ -33,6 +33,17 @@ class DatasetBundleTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_bundle(bundle_path)
 
+    def test_manifest_contract_rejects_missing_split(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle_path = Path(directory) / "fixture.dts"
+            create_bundle(bundle_path, "fixture", {"train": [], "validation": [], "test": []})
+            manifest_path = bundle_path / "manifest.json"
+            manifest = __import__("json").loads(manifest_path.read_text(encoding="utf-8"))
+            del manifest["splits"]["test"]
+            manifest_path.write_text(__import__("json").dumps(manifest), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                verify_bundle(bundle_path)
+
 
 if __name__ == "__main__":
     unittest.main()
