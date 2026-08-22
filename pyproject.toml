@@ -9,6 +9,9 @@ description = "Host orchestration and model laboratory for Spaceslug"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+spaceslug = "spaceslug.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest>=8"]
 
