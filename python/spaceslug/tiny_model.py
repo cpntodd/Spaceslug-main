@@ -37,11 +37,29 @@ class TinyBigramModel:
         scale = 1.0 / count
         return total * scale, [[value * scale for value in row] for row in gradients]
 
-    def train_step(self, sequences: list[list[int]], learning_rate: float) -> float:
+    def train_step(
+        self,
+        sequences: list[list[int]],
+        learning_rate: float,
+        *,
+        weight_decay: float = 0.0,
+        optimizer_state: dict | None = None,
+    ) -> float:
+        """Apply one deterministic AdamW step and return pre-update loss."""
         loss, gradients = self.loss_and_gradients(sequences)
-        for row, gradient_row in zip(self.weights, gradients):
+        state = optimizer_state if optimizer_state is not None else {}
+        step = int(state.get("step", 0)) + 1
+        beta1, beta2, epsilon = 0.9, 0.999, 1e-8
+        first = state.setdefault("first", [[0.0] * self.vocab_size for _ in range(self.vocab_size)])
+        second = state.setdefault("second", [[0.0] * self.vocab_size for _ in range(self.vocab_size)])
+        for row, gradient_row, first_row, second_row in zip(self.weights, gradients, first, second):
             for index, gradient in enumerate(gradient_row):
-                row[index] -= learning_rate * gradient
+                first_row[index] = beta1 * first_row[index] + (1.0 - beta1) * gradient
+                second_row[index] = beta2 * second_row[index] + (1.0 - beta2) * gradient * gradient
+                first_hat = first_row[index] / (1.0 - beta1**step)
+                second_hat = second_row[index] / (1.0 - beta2**step)
+                row[index] -= learning_rate * (first_hat / (math.sqrt(second_hat) + epsilon) + weight_decay * row[index])
+        state["step"] = step
         return loss
 
     def save(self, path: str | Path) -> None:

@@ -10,8 +10,9 @@ class TinyModelTest(unittest.TestCase):
         sequences = [[0, 1, 0, 1], [0, 1, 0, 1]]
         model = TinyBigramModel.create(2)
         before, _ = model.loss_and_gradients(sequences)
+        optimizer_state = {}
         for _ in range(20):
-            model.train_step(sequences, learning_rate=0.5)
+            model.train_step(sequences, learning_rate=0.2, optimizer_state=optimizer_state)
         after, _ = model.loss_and_gradients(sequences)
         self.assertLess(after, before)
 
