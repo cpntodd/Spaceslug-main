@@ -25,6 +25,13 @@ class BackendSmokeTest(unittest.TestCase):
         self.assertFalse(result.fallback_used)
         self.assertTrue(result.output["runtime_report"].endswith("PASS"))
         self.assertEqual(vector_add([0.25, 1.5], [0.75, 2.5]), [1.0, 4.0])
+        self.assertGreater(result.metrics["host_elapsed_seconds"], 0.0)
+        self.assertFalse(result.metrics["software_vulkan"])
+
+        lavapipe = BackendSession(RUNTIME, RUNTIME_REVISION, software_vulkan=True)
+        lava_result = lavapipe.execute_vector_add()
+        self.assertEqual(lava_result.status, "ok")
+        self.assertTrue(lava_result.metrics["software_vulkan"])
 
         # The runtime's vector_add executable compares its deterministic output
         # against its CPU reference. This host test verifies that passed evidence
