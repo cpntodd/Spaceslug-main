@@ -2,7 +2,7 @@
 
 - **Status:** Experimental
 - **Date:** 2026-08-23
-- **Spaceslug-main revision:** `3f567b2`
+- **Spaceslug-main revisions:** `3f567b2`, `52a138f`
 - **vulkan-runtime revision:** `3e2b6f0`
 
 ## Objective
@@ -17,7 +17,7 @@ Advance the initial executable-level smoke boundary to a structured native host 
 {"dtype":"float32","shape":[3],"output":[1,4,1]}
 ```
 
-The runtime remains the execution oracle in this milestone; the adapter does not yet export Vulkan buffers or invoke runtime kernels through a stable C ABI.
+The runtime remains the execution oracle in this milestone; the adapter does not yet export Vulkan buffers or invoke runtime kernels through a stable C ABI. The adapter accepts custom CSV float32 inputs; `0.5,2.0` plus `-0.5,3.0` produced `[0,5]` with runtime pass evidence.
 
 ## Evidence
 
