@@ -55,6 +55,8 @@ def create_bundle(
     root = Path(output)
     if root.exists():
         raise FileExistsError(root)
+    source_values = list(sources)
+    license_values = list(licenses)
     root.mkdir(parents=True)
     (root / "records").mkdir()
     (root / "source").mkdir()
@@ -72,8 +74,8 @@ def create_bundle(
         path.write_bytes(b"".join(_json_bytes(row) for row in rows))
         counts[split] = len(rows)
 
-    (root / "source" / "sources.jsonl").write_bytes(b"".join(_json_bytes({"source": value}) for value in sources))
-    (root / "source" / "licenses.jsonl").write_bytes(b"".join(_json_bytes({"license": value}) for value in licenses))
+    (root / "source" / "sources.jsonl").write_bytes(b"".join(_json_bytes({"source": value}) for value in source_values))
+    (root / "source" / "licenses.jsonl").write_bytes(b"".join(_json_bytes({"license": value}) for value in license_values))
     (root / "preprocessing" / "config.json").write_bytes(_json_bytes({
         "pipeline": preprocessing_pipeline, "revision": preprocessing_revision, "seed": seed
     }))
@@ -90,7 +92,7 @@ def create_bundle(
         "encoding": {"text": "utf-8", "compression": "none"},
         "tokenizer": {"id": tokenizer_id, "revision": tokenizer_revision, "vocab_size": 1},
         "preprocessing": {"pipeline": preprocessing_pipeline, "revision": preprocessing_revision, "seed": seed},
-        "provenance": {"sources": list(sources), "licenses": list(licenses), "privacy_status": "unknown"},
+        "provenance": {"sources": source_values, "licenses": license_values, "privacy_status": "unknown"},
         "files": files,
     }
     (root / "manifest.json").write_bytes(_json_bytes(manifest))
@@ -103,8 +105,15 @@ def verify_bundle(root: str | Path) -> DatasetBundle:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("format") != "spaceslug-dataset" or manifest.get("schema_version") != 1:
         raise ValueError("unsupported dataset bundle")
+    expected_splits = {"train", "validation", "test"}
+    if set(manifest.get("splits", {})) != expected_splits:
+        raise ValueError("dataset must declare train, validation, and test splits")
     for item in manifest["files"]:
         path = root / item["path"]
         if not path.is_file() or path.stat().st_size != item["bytes"] or _sha256(path) != item["sha256"]:
             raise ValueError(f"checksum mismatch: {item['path']}")
+    for split, expected_count in manifest["splits"].items():
+        actual_count = len(DatasetBundle(root, manifest).records(split))
+        if actual_count != expected_count:
+            raise ValueError(f"record count mismatch for {split}")
     return DatasetBundle(root, manifest)

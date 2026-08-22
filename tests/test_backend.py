@@ -2,6 +2,7 @@ from pathlib import Path
 import unittest
 
 from spaceslug.backend import BackendSession
+from spaceslug.reference import vector_add
 
 
 RUNTIME = Path(__file__).parents[2] / "vulkan-runtime"
@@ -23,6 +24,7 @@ class BackendSmokeTest(unittest.TestCase):
         self.assertEqual(result.operation, "vector_add")
         self.assertFalse(result.fallback_used)
         self.assertTrue(result.output["runtime_report"].endswith("PASS"))
+        self.assertEqual(vector_add([0.25, 1.5], [0.75, 2.5]), [1.0, 4.0])
 
         # The runtime's vector_add executable compares its deterministic output
         # against its CPU reference. This host test verifies that passed evidence
