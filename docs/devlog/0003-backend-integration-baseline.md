@@ -21,8 +21,14 @@ Vector addition is the first smoke operation because it has a small CPU referenc
 
 ## Measurements
 
-No host adapter or new parity run exists yet. There are no performance or loss results to report.
+- Runtime configure/build: passed.
+- Runtime CTest: 25/25 passed on RADV and 25/25 passed with lavapipe.
+- Runtime device: AMD Radeon RX 580 Series (RADV POLARIS10), Vulkan 1.4.305.
+- Host smoke test: 1/1 passed using Python's standard-library `unittest`.
+- Host adapter: subprocess-backed; no CPU fallback reported.
+
+The host test invokes the runtime's existing vector-add executable, whose own deterministic CPU-reference comparison reports `N=1048576 PASS`. The host currently verifies and surfaces that evidence rather than independently reimplementing the tensor operation.
 
 ## Next gate
 
-Build and test the pinned runtime on RADV and lavapipe where supported, then invoke a host smoke adapter and compare its result with a CPU reference. The integration remains Proposed until that evidence is recorded.
+Replace or supplement the subprocess adapter with a native ABI or binding, then add an independent host-side vector-add reference and structured per-operation timing/transfer metrics. The adapter is Experimental until that gate is complete.

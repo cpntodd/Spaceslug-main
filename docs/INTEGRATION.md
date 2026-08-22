@@ -85,7 +85,7 @@ Values are illustrative schema shape only until an implementation produces measu
 5. Compare host output with a host CPU reference within a defined tolerance.
 6. Record commands, environment, runtime commit, device, metrics, and limitations in an experiment record and devlog.
 
-Until these steps are complete, this integration is **Proposed**, not Validated.
+The first subprocess-backed host adapter and standard-library smoke test now exist. The host test invokes the pinned runtime's `smoke` and `vector_add` executables, verifies the RADV capability report, requires the runtime's CPU-reference comparison to pass, and surfaces the runtime revision and fallback state. This adapter remains **Experimental** because it does not yet expose a native ABI or independent host-side tensor comparison.
 
 ## Versioning and upgrades
 

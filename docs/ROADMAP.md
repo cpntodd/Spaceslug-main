@@ -10,17 +10,23 @@ Freeze the product boundary, canonical IR, tensor/layout rules, artifact schemas
 
 Expose the existing Spaceslug runtime through a stable asynchronous backend interface with explicit capabilities, ownership, events, errors, and metrics. Preserve current runtime tests.
 
-**Gate:** standalone host executes validated primitives through the API.
+**Progress:** an Experimental subprocess-backed Python adapter now surfaces runtime capabilities and the validated `vector_add` operation at pinned revision `3e2b6f0`.
+
+**Gate:** standalone host executes validated primitives through the API with a native boundary and independent host-side parity evidence.
 
 ## Phase 1A — dataset and measurement foundation
 
 Implement the `.dts` manifest and bundle contracts, deterministic record normalization, checksum verification, dataset lineage, protected benchmark references, experiment metadata, and the first devlog/reporting workflow.
+
+**Progress:** an initial dependency-free deterministic `.dts` directory writer/verifier and checksum tamper test are implemented. Tokenized derived shards, schema validation, and benchmark-overlap checks remain.
 
 **Gate:** a small fixture round-trips byte-for-byte, reproduces pinned token IDs, verifies checksums, and produces a reproducible statistics report.
 
 ## Phase 2 — tiny CPU engine
 
 Implement a tiny dense transformer, CPU reference backend, tokenizer contract, teacher-forced loss, checkpointing, and CLI chat/training.
+
+**Progress:** a dependency-free tiny CPU bigram reference model now supports teacher-forced next-token loss, gradient descent, and checkpoint save/reload. The dense transformer, tokenizer, and CLI remain.
 
 **Gate:** train, save, reload, and chat with Spaceslug-Tiny.
 
