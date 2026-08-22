@@ -11,10 +11,10 @@ Establish the first executable host boundary, deterministic dataset bundle slice
 
 ## Implemented
 
-- Python host package with a subprocess-backed `BackendSession`.
+- Python host package with a subprocess-backed `BackendSession`, explicit RADV/lavapipe selection, and elapsed-time/backend metrics.
 - Structured capabilities and execution results for the runtime `vector_add` operation.
 - Independent host-side vector-add reference helper.
-- Deterministic `.dts` directory writer and verifier with canonical sorted JSONL, manifest metadata, SHA-256 checksums, split counts, and tamper detection.
+- Deterministic `.dts` directory writer and verifier with canonical sorted JSONL, manifest metadata, SHA-256 checksums, split counts, tamper detection, and statistics.
 - Tiny dependency-free CPU bigram model with teacher-forced next-token loss, gradient descent, and checkpoint save/reload.
 
 ## Evidence
