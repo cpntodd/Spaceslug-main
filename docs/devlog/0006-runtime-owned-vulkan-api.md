@@ -2,7 +2,7 @@
 
 - **Status:** Experimental
 - **Date:** 2026-08-23
-- **Spaceslug-main revision:** pending host documentation commit
+- **Spaceslug-main revisions:** `3a3ca79`, `8e05184`, `77b8370`
 - **vulkan-runtime revision:** `a195bc6`
 
 ## Objective
@@ -37,4 +37,4 @@ The implementation reuses the validated embedded `vector_add` shader flow, accep
 
 ## Limitation
 
-The host repository currently contains the ABI declaration and client source, but does not yet automate cross-repository shared-library discovery or loading. That is the next integration task. No benchmark claim is made.
+The host Python adapter now discovers `build/debug/libvulkan_runtime_api.so`, loads `spaceslug_vector_add` through `ctypes`, preserves explicit lavapipe selection, and reports native execution in metrics. `scripts/build_runtime_api.sh` provides the reproducible build step. No benchmark claim is made.
