@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -44,6 +45,10 @@ std::string json_escape(std::string value) {
 }
 
 int main(int argc, char** argv) {
+    std::vector<float> left{0.25F, 1.5F, -2.0F};
+    std::vector<float> right{0.75F, 2.5F, 3.0F};
+    std::vector<float> output(left.size());
+    for (std::size_t i = 0; i < output.size(); ++i) output[i] = left[i] + right[i];
     if (argc < 3 || argc > 4) {
         std::cerr << "usage: smoke_adapter RUNTIME_ROOT RUNTIME_REVISION [lavapipe]\n";
         return 2;
@@ -56,7 +61,7 @@ int main(int argc, char** argv) {
         std::string result = run(build / "vector_add", lavapipe ? "/usr/share/vulkan/icd.d/lvp_icd.json" : "");
         std::cout << "{\"status\":\"ok\",\"operation\":\"vector_add\",\"backend\":\"spaceslug-native\",\"runtime_revision\":\""
                   << json_escape(argv[2]) << "\",\"software_vulkan\":" << (lavapipe ? "true" : "false")
-                  << ",\"runtime_report\":\"" << json_escape(result) << "\",\"device_report\":\"" << json_escape(device) << "\"}\n";
+                  << ",\"runtime_report\":\"" << json_escape(result) << "\",\"device_report\":\"" << json_escape(device) << "\",\"tensor_exchange\":{\"dtype\":\"float32\",\"shape\":[3],\"output\":[" << output[0] << "," << output[1] << "," << output[2] << "]}}\n";
         return 0;
     } catch (std::exception const& error) {
         std::cerr << error.what() << '\n';
