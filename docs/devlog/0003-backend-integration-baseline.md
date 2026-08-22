@@ -11,7 +11,7 @@ Define the first stable boundary between the Spaceslug-main host and the separat
 
 ## Runtime baseline
 
-The pinned runtime is `cpntodd/Spaceslug` on `main` at `3e2b6f0` (`M7a: packed fp16 CQ4 chain + norm-layout correctness fix + bench`). The runtime contains existing validated-operation targets including vector addition and SGEMM. A fresh configure/build completed successfully. Device smoke reports AMD Radeon RX 580 Series (RADV POLARIS10), Vulkan 1.4.305, with validation enabled. All 25 CTest targets passed on the default RADV path and with lavapipe. This validates the runtime baseline only; no host adapter exists yet.
+The pinned runtime is `cpntodd/Spaceslug` on `main` at `3e2b6f0` (`M7a: packed fp16 CQ4 chain + norm-layout correctness fix + bench`). The runtime contains existing validated-operation targets including vector addition and SGEMM. A fresh configure/build completed successfully. Device smoke reports AMD Radeon RX 580 Series (RADV POLARIS10), Vulkan 1.4.305, with validation enabled. All 25 CTest targets passed on the default RADV path and with lavapipe. This validates the runtime baseline; the host adapter remains Experimental.
 
 ## API decision
 
@@ -25,10 +25,11 @@ Vector addition is the first smoke operation because it has a small CPU referenc
 - Runtime CTest: 25/25 passed on RADV and 25/25 passed with lavapipe.
 - Runtime device: AMD Radeon RX 580 Series (RADV POLARIS10), Vulkan 1.4.305.
 - Host smoke test: 1/1 passed using Python's standard-library `unittest`.
-- Host adapter: subprocess-backed; no CPU fallback reported.
+- Host Python smoke test: passed on RADV and lavapipe; no CPU fallback reported.
+- Native C++ smoke adapter: passed on RADV and lavapipe; structured JSON returned.
 
-The host test invokes the runtime's existing vector-add executable, whose own deterministic CPU-reference comparison reports `N=1048576 PASS`. The host currently verifies and surfaces that evidence rather than independently reimplementing the tensor operation.
+Both adapters invoke the runtime's existing vector-add executable, whose deterministic CPU-reference comparison reports `N=1048576 PASS`. The host also has an independent reference helper; direct runtime tensor-buffer exchange and transfer metrics remain future work.
 
 ## Next gate
 
-Replace or supplement the subprocess adapter with a native ABI or binding, then add an independent host-side vector-add reference and structured per-operation timing/transfer metrics. The adapter is Experimental until that gate is complete.
+Expose runtime tensor buffers through a stable native ABI or binding and compare host-computed vectors against returned values. The current executable-wrapper adapter is Experimental.
