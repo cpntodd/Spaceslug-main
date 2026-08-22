@@ -85,7 +85,7 @@ Values are illustrative schema shape only until an implementation produces measu
 5. Compare host output with a host CPU reference within a defined tolerance.
 6. Record commands, environment, runtime commit, device, metrics, and limitations in an experiment record and devlog.
 
-The first host adapter and standard-library smoke test now exist. The Python adapter invokes the pinned runtime's `smoke` and `vector_add` executables, while `native/smoke_adapter.cpp` provides a native structured JSON boundary for the same operation. Both paths verify the RADV capability report, require the runtime's CPU-reference comparison to pass, and surface the runtime revision and fallback state. This adapter remains **Experimental** because it wraps the validated executable rather than exposing runtime tensor buffers through a stable native ABI.
+The first host adapter and standard-library smoke test now exist. The Python adapter invokes the pinned runtime's `smoke` and `vector_add` executables, while `native/smoke_adapter.cpp` provides a native structured JSON boundary for the same operation. The native result includes an explicit float32 tensor exchange payload (`[1,4,1]`) computed from deterministic host inputs, alongside runtime pass evidence. Both paths verify the RADV capability report, require the runtime's CPU-reference comparison to pass, and surface the runtime revision and fallback state. This adapter remains **Experimental** because the runtime executable is still the execution oracle rather than a direct tensor API.
 
 ## Versioning and upgrades
 
