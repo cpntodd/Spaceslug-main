@@ -2,7 +2,7 @@
 
 - **Status:** Experimental
 - **Date:** 2026-08-23
-- **Spaceslug-main revisions:** `3f567b2`, `52a138f`
+- **Spaceslug-main revisions:** `3f567b2`, `52a138f`, `669de70`, `1a9df40`
 - **vulkan-runtime revision:** `3e2b6f0`
 
 ## Objective
@@ -28,4 +28,4 @@ The runtime remains the execution oracle in this milestone; the adapter does not
 
 ## Limitations and next step
 
-Tensor values are currently exchanged within the native host adapter; direct runtime tensor-buffer exchange remains the next boundary. No performance claim is made from this smoke path.
+Tensor values are currently exchanged within the native host adapter. A separately compiled C ABI reference function and test now pass (`runtime_abi vector_add: PASS`), but direct runtime tensor-buffer exchange remains the next boundary. No performance claim is made from this smoke path.
