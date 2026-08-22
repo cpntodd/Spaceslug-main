@@ -26,6 +26,7 @@ class DatasetBundleTest(unittest.TestCase):
             ])
             self.assertEqual(bundle.manifest["revision"], verified.manifest["revision"])
             self.assertEqual(verified.manifest["record_count"], 3)
+            self.assertEqual(verified.stats(), {"train": 2, "validation": 1, "test": 0})
             self.assertEqual(verified.manifest["provenance"]["sources"], [])
 
             (bundle_path / "records" / "train.jsonl").write_text("tampered\n", encoding="utf-8")

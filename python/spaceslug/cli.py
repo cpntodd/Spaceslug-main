@@ -21,7 +21,7 @@ def main() -> int:
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
-        print(f"records={bundle.manifest['record_count']} splits={bundle.manifest['splits']}")
+        print(f"records={bundle.manifest['record_count']} splits={bundle.stats()}")
         return 0
     model = TinyBigramModel.create(2)
     sequences = [[0, 1, 0, 1], [0, 1, 0, 1]]

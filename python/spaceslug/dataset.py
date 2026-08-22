@@ -6,8 +6,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-import shutil
-import tempfile
 from typing import Iterable, Mapping
 
 
@@ -33,6 +31,9 @@ class DatasetBundle:
         with path.open(encoding="utf-8") as stream:
             return [json.loads(line) for line in stream if line.strip()]
 
+    def stats(self) -> dict[str, int]:
+        return {split: len(self.records(split)) for split in ("train", "validation", "test")}
+
 
 def create_bundle(
     output: str | Path,
@@ -47,11 +48,7 @@ def create_bundle(
     sources: Iterable[str] = (),
     licenses: Iterable[str] = (),
 ) -> DatasetBundle:
-    """Write a deterministic uncompressed .dts directory and return it.
-
-    Canonical JSONL is intentionally uncompressed for the first implementation;
-    the bytes are lossless and the format remains inspectable with standard tools.
-    """
+    """Write a deterministic uncompressed .dts directory and return it."""
     root = Path(output)
     if root.exists():
         raise FileExistsError(root)
@@ -65,8 +62,7 @@ def create_bundle(
 
     counts: dict[str, int] = {}
     for split in ("train", "validation", "test"):
-        rows = list(splits.get(split, ()))
-        rows = sorted((dict(row) for row in rows), key=lambda row: str(row["record_id"]))
+        rows = sorted((dict(row) for row in splits.get(split, ())), key=lambda row: str(row["record_id"]))
         for row in rows:
             if not isinstance(row.get("record_id"), str) or not row["record_id"]:
                 raise ValueError("every record requires a non-empty string record_id")
@@ -108,12 +104,12 @@ def verify_bundle(root: str | Path) -> DatasetBundle:
     expected_splits = {"train", "validation", "test"}
     if set(manifest.get("splits", {})) != expected_splits:
         raise ValueError("dataset must declare train, validation, and test splits")
+    bundle = DatasetBundle(root, manifest)
     for item in manifest["files"]:
         path = root / item["path"]
         if not path.is_file() or path.stat().st_size != item["bytes"] or _sha256(path) != item["sha256"]:
             raise ValueError(f"checksum mismatch: {item['path']}")
     for split, expected_count in manifest["splits"].items():
-        actual_count = len(DatasetBundle(root, manifest).records(split))
-        if actual_count != expected_count:
+        if len(bundle.records(split)) != expected_count:
             raise ValueError(f"record count mismatch for {split}")
-    return DatasetBundle(root, manifest)
+    return bundle
