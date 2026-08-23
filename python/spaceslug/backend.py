@@ -160,10 +160,14 @@ class BackendSession:
         return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward/backward/update kernels are not implemented", "rank": rank}, {"supported_base": model.hidden_size == 64 and model.vocab_size == 259})
 
     def execute_projected_attention_forward(self, tokens: list[int], model: Any) -> ExecutionResult:
-        """Use the complete GPU chain only for the validated Tiny shape."""
+        """CPU-authoritative forward reference."""
+        return self.execute_projected_attention_cpu_fallback(tokens, model)
+
+    def execute_projected_attention_gpu(self, tokens: list[int], model: Any) -> ExecutionResult:
+        """Run the composed Vulkan Tiny chain when its fixed contract is available."""
         if model.hidden_size == 64 and model.vocab_size == 259 and 0 < len(tokens) <= 128 and hasattr(self._native(), "spaceslug_attention_causal"):
             return self._execute_tiny_gpu_forward(tokens, model)
-        return self.execute_projected_attention_cpu_fallback(tokens, model)
+        return self.execute_projected_attention_gpu_plan(tokens, model)
 
     def _native_sgemm_values(self, a: list[float], b: list[float], m: int, n: int, k: int) -> list[float]:
         import array, ctypes, os

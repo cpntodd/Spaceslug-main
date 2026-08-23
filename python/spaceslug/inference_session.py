@@ -32,7 +32,7 @@ class InferenceSession:
         return {"operation": result.operation, "backend": result.backend, "status": result.status, "parity": result.metrics.get("parity"), "reason": result.metrics.get("reason"), "steps": result.metrics.get("steps", []), "runtime_revision": result.runtime_revision, "device": result.device, "gpu_execution": result.status == "ok"}
 
     def run_gpu_plan(self, tokens: list[int]) -> dict:
-        gpu_result = self.backend.execute_projected_attention_gpu_plan(tokens, self.model)
+        gpu_result = self.backend.execute_projected_attention_gpu(tokens, self.model)
         return self.compare_gpu_result(tokens, gpu_result)
 
     def compare_gpu_result(self, tokens: list[int], gpu_result) -> dict:

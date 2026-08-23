@@ -20,6 +20,13 @@ class InferenceSessionTest(unittest.TestCase):
         self.assertIn("causal_softmax", result["steps"])
         self.assertFalse(result["gpu_execution"])
 
+    def test_gpu_plan_runs_tiny_forward_parity(self):
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259, 64))
+        result = session.run_gpu_plan([1, 2, 3])
+        self.assertTrue(result["gpu_execution"])
+        self.assertEqual(result["parity"]["status"], "pass")
+        self.assertEqual(result["device"].startswith("AMD Radeon RX 580"), True)
+
     def test_gpu_plan_is_explicitly_not_run(self):
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
         result = session.run_gpu_plan([1, 2, 3])
