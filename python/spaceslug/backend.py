@@ -121,7 +121,7 @@ class BackendSession:
                 max_relative_error = max(max_relative_error, abs(float(cc[row * n + column]) - expected) / max(1.0, abs(expected)))
         return ExecutionResult("ok", "sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "max_relative_error": max_relative_error}, {"m": m, "n": n, "k": k, "first": float(cc[0]), "values": cc.tolist()})
 
-    def execute_projected_qkv(self, states: list[float], projection: list[float], sequence_length: int, hidden_size: int) -> ExecutionResult:
+    def execute_projected_qkv(self, states: list[float], projection: list[float], sequence_length: int, hidden_size: int, *, cpu_reference: list[float] | None = None) -> ExecutionResult:
         if len(states) != sequence_length * hidden_size or len(projection) != hidden_size * hidden_size:
             raise BackendError("projected QKV dimensions are invalid")
         result = self.execute_sgemm_native(states, projection, sequence_length // 64 * 64, hidden_size, hidden_size) if sequence_length >= 64 and hidden_size >= 64 and hidden_size % 64 == 0 else None
@@ -131,6 +131,11 @@ class BackendSession:
         result.metrics["parity"] = "CPU projection contract"
         result.output["sequence_length"] = sequence_length
         result.output["hidden_size"] = hidden_size
+        if cpu_reference is not None:
+            if len(cpu_reference) != len(result.output["values"]):
+                raise BackendError("CPU projection reference length does not match GPU output")
+            result.metrics["max_cpu_projection_error"] = max(abs(actual - expected) / max(1.0, abs(expected)) for actual, expected in zip(result.output["values"], cpu_reference))
+            result.metrics["parity"] = "cpu-projection-output"
         return result
 
     def projected_attention_forward_plan(self, *, hidden_size: int, sequence_length: int, vocab_size: int) -> dict[str, Any]:

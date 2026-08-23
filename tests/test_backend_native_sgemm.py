@@ -17,10 +17,11 @@ class NativeSgemmTest(unittest.TestCase):
         self.assertEqual(len(result.output["values"]), 64 * 64)
 
     def test_projected_qkv_uses_native_sgemm_for_padded_shape(self):
-        result = self.session.execute_projected_qkv([1.0] * (64 * 64), [2.0] * (64 * 64), 64, 64)
+        result = self.session.execute_projected_qkv([1.0] * (64 * 64), [2.0] * (64 * 64), 64, 64, cpu_reference=[128.0] * (64 * 64))
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.operation, "qkv_projection_sgemm")
-        self.assertEqual(result.metrics["parity"], "CPU projection contract")
+        self.assertEqual(result.metrics["parity"], "cpu-projection-output")
+        self.assertLessEqual(result.metrics["max_cpu_projection_error"], 1e-3)
 
     def test_projected_qkv_reports_unpadded_shape_without_false_gpu_claim(self):
         result = self.session.execute_projected_qkv([1.0] * (4 * 2), [2.0] * 4, 4, 2)
