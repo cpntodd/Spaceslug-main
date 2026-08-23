@@ -89,6 +89,14 @@ class SpaceslugTui:
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
         return result.__dict__
 
+    def run_gpu_chain_plan(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
+        from .backend import BackendSession
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))
+        report = session.run_gpu_chain_plan(tokens)
+        self.state.status = f"GPU chain: {report['status']}"
+        self.state.backend = report["backend"]
+        return report
+
     def run_gpu_forward_plan(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
         from .backend import BackendSession
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))

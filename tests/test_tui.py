@@ -31,6 +31,13 @@ class TuiTest(unittest.TestCase):
         self.assertIn("attention_kernel", capabilities["operations"])
         self.assertTrue(capabilities["device"])
 
+    def test_tui_gpu_chain_plan_displays_steps(self):
+        tui = SpaceslugTui()
+        report = tui.run_gpu_chain_plan([1, 2, 3])
+        self.assertEqual(report["status"], "not-run")
+        self.assertIn("causal_softmax", report["steps"])
+        self.assertIn("GPU chain: not-run", tui.state.status)
+
     def test_tui_gpu_forward_plan_is_not_run(self):
         tui = SpaceslugTui()
         report = tui.run_gpu_forward_plan([1, 2, 3])
