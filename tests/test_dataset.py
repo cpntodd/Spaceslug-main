@@ -33,6 +33,23 @@ class DatasetBundleTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_bundle(bundle_path)
 
+    def test_repeated_writes_are_byte_identical(self):
+        splits = {
+            "train": [{"record_id": "b", "text": "second"}, {"record_id": "a", "text": "first"}],
+            "validation": [{"record_id": "v", "text": "validate"}],
+            "test": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "first.dts"
+            second = Path(directory) / "second.dts"
+            create_bundle(first, "fixture", splits, sources=["source-b", "source-a"], licenses=["license-b", "license-a"])
+            create_bundle(second, "fixture", splits, sources=["source-b", "source-a"], licenses=["license-b", "license-a"])
+            first_files = sorted(path.relative_to(first) for path in first.rglob("*") if path.is_file())
+            second_files = sorted(path.relative_to(second) for path in second.rglob("*") if path.is_file())
+            self.assertEqual(first_files, second_files)
+            for relative_path in first_files:
+                self.assertEqual((first / relative_path).read_bytes(), (second / relative_path).read_bytes())
+
     def test_manifest_contract_rejects_missing_split(self):
         with tempfile.TemporaryDirectory() as directory:
             bundle_path = Path(directory) / "fixture.dts"
