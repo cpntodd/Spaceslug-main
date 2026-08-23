@@ -155,6 +155,10 @@ class BackendSession:
             raise BackendError(f"attention parity did not pass: {output}")
         return ExecutionResult("ok", "attention", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "execution": "validated-executable"}, {"runtime_report": output})
 
+    def execute_tiny_attention_kernel_chain(self, tokens: list[int], model: Any) -> ExecutionResult:
+        plan = self.projected_attention_forward_plan(hidden_size=model.hidden_size, sequence_length=len(tokens), vocab_size=model.vocab_size)
+        return ExecutionResult("not-run", "tiny_projected_attention_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "chain requires embedding/qkv/causal-mask/lm-head integration", "steps": plan["steps"]}, {"plan": plan})
+
     def execute_projected_attention_gpu_plan(self, tokens: list[int], model: Any) -> ExecutionResult:
         plan = self.projected_attention_forward_plan(hidden_size=model.hidden_size, sequence_length=len(tokens), vocab_size=model.vocab_size)
         return ExecutionResult("not-run", plan["operation"], "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "causal attention Vulkan orchestration is not implemented"}, {"plan": plan})

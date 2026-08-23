@@ -12,6 +12,14 @@ class InferenceSessionTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["parity"], "cpu-reference")
 
+    def test_gpu_chain_plan_lists_forward_steps(self):
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        result = session.run_gpu_chain_plan([1, 2, 3])
+        self.assertEqual(result["status"], "not-run")
+        self.assertIn("qkv_projection_sgemm", result["steps"])
+        self.assertIn("causal_softmax", result["steps"])
+        self.assertFalse(result["gpu_execution"])
+
     def test_gpu_plan_is_explicitly_not_run(self):
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
         result = session.run_gpu_plan([1, 2, 3])
