@@ -27,6 +27,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - Projected-attention experiment records and validation-loss reporting are tied to the `.dts` revision and training configuration.
 - `spaceslug tiny-attention-train BUNDLE CHECKPOINT ARTIFACT EXPERIMENT` now integrates projected training, optional checkpoint resume, checkpoint output, checksummed artifact output, validation metrics, and experiment metadata in one command.
 - Projected checkpoints now persist AdamW first/second moments and step state (schema version 2). Resume parity is accepted against uninterrupted AdamW training, and a loaded projected artifact produces a deterministic greedy next-token result through `projected_attention_inference.py`.
+- Devlog 0008 records a complete CLI train → AdamW resume → checksum-verified artifact load → deterministic inference run.
 
 ## Acceptance evidence
 
