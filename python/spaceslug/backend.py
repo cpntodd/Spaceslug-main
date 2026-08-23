@@ -71,6 +71,10 @@ class BackendSession:
                     causal = self._library.spaceslug_attention_causal
                     causal.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     causal.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_lora_delta"):
+                    lora_delta = self._library.spaceslug_lora_delta
+                    lora_delta.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
+                    lora_delta.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_train_step"):
                     lora_train = self._library.spaceslug_lora_train_step
                     lora_train.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32]
@@ -206,6 +210,67 @@ class BackendSession:
         if model.hidden_size == 64 and model.vocab_size == 259 and 0 < len(tokens) <= 128 and hasattr(self._native(), "spaceslug_attention_causal"):
             return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_gpu_plan(tokens, model)
+
+    def execute_tiny_lora_forward(self, tokens: list[int], model: Any, adapter: Any) -> ExecutionResult:
+        """Compose frozen base projections with GPU LoRA deltas for Tiny inference."""
+        if model.hidden_size != 64 or model.vocab_size != 259 or not 0 < len(tokens) <= 128 or adapter.hidden_size != 64 or adapter.rank != 4:
+            return ExecutionResult("not-run", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward requires V=259, H=64, rank=4, and 1<=T<=128"}, {"token_count": len(tokens)})
+        if not hasattr(self._native(), "spaceslug_lora_delta") or not hasattr(self._native(), "spaceslug_attention_causal"):
+            return ExecutionResult("not-run", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "LoRA delta or causal attention ABI is unavailable"}, {"token_count": len(tokens)})
+        import array, ctypes, os
+        from .lora import LoRAProjectedTinyAttention
+        from .positional_encoding import sinusoidal_positions
+        t, h, vp = len(tokens), 64, 320
+        states = [model.embedding[token][:] for token in tokens]
+        if model.use_positions:
+            positions = sinusoidal_positions(t, h)
+            states = [[value + positions[row][column] for column, value in enumerate(state)] for row, state in enumerate(states)]
+        states += [[0.0] * h for _ in range(128 - t)]
+        flat_states = [value for row in states for value in row]
+        def flat(matrix): return [value for row in matrix for value in row]
+        def projected(name):
+            base = self._native_sgemm_values(flat_states, flat(getattr(model, name)), 128, h, h)
+            matrix = adapter.matrices[name]
+            scaled_b = [value * (adapter.alpha / adapter.rank) for row in matrix.B for value in row]
+            delta = self._native_lora_delta_values(flat_states, flat(matrix.A), scaled_b, 128, adapter.rank)
+            return [left + right for left, right in zip(base, delta)]
+        q, k, v = projected("query"), projected("key"), projected("value")
+        qv, kv, vv = (array.array("f", values) for values in (q, k, v))
+        context = (ctypes.c_float * (128 * h))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_attention_causal((ctypes.c_float * len(qv)).from_buffer(qv), (ctypes.c_float * len(kv)).from_buffer(kv), (ctypes.c_float * len(vv)).from_buffer(vv), context, t, h)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native causal attention returned {code}")
+        context_values = list(context)
+        base_projected = self._native_sgemm_values(context_values, flat(model.output), 128, h, h)
+        output_matrix = adapter.matrices["output"]
+        scaled_output_b = [value * (adapter.alpha / adapter.rank) for row in output_matrix.B for value in row]
+        delta_projected = self._native_lora_delta_values(context_values, flat(output_matrix.A), scaled_output_b, 128, adapter.rank)
+        projected_values = [left + right for left, right in zip(base_projected, delta_projected)]
+        lm = [model.lm_head[row][column] if column < model.vocab_size else 0.0 for row in range(h) for column in range(vp)]
+        logits_all = self._native_sgemm_values(projected_values, lm, 128, vp, h)
+        logits = logits_all[(t - 1) * vp:t * vp][:model.vocab_size]
+        reference = LoRAProjectedTinyAttention(model, adapter).logits_for_tokens(tokens)
+        parity = compare_float_arrays(logits, reference)
+        return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
+
+    def _native_lora_delta_values(self, x: list[float], a: list[float], b: list[float], m: int, rank: int) -> list[float]:
+        import array, ctypes, os
+        xx, aa, bb = (array.array("f", values) for values in (x, a, b))
+        yy = (ctypes.c_float * (m * 64))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_lora_delta((ctypes.c_float * len(xx)).from_buffer(xx), (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), yy, m, rank)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native LoRA delta returned {code}")
+        return list(yy)
 
     def _native_sgemm_values(self, a: list[float], b: list[float], m: int, n: int, k: int) -> list[float]:
         import array, ctypes, os
