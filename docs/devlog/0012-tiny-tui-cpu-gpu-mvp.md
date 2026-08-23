@@ -16,6 +16,7 @@
 - The TUI controller now verifies a selected `.dts` bundle, enforces the CPU gate, runs the configured steps × epochs, and receives the live loss series.
 - After CPU verification, the TUI can run the current Vulkan SGEMM parity gate and report RADV/lavapipe backend status; it still does not claim Tiny forward execution.
 - The backend and TUI expose a resolved projected-attention forward plan, with explicit dimensions, operation order, and a `CPU logits vs RADV logits` parity gate. This is a contract/planning boundary, not a GPU implementation.
+- `vulkan-runtime` now exports a native `spaceslug_sgemm` ABI and the Python host can call it with dimension validation and structured result metadata. This is the first callable GPU projection primitive; Q/K/V orchestration and logits parity remain open.
 - `spaceslug tiny-cpu-verify`: explicit CPU-reference acceptance gate.
 - Vulkan backend readiness report that names the current validated operation and refuses to claim Tiny GPU inference/training prematurely.
 
