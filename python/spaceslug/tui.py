@@ -166,13 +166,19 @@ class SpaceslugTui:
             canvas[row][column] = "●"
         return ["".join(row).ljust(width) for row in canvas]
 
+    def runtime_capabilities(self, runtime_root: str | Path = "/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", runtime_revision: str = "runtime") -> dict:
+        from .backend import BackendSession
+        capabilities = BackendSession(runtime_root, runtime_revision).capabilities()
+        return {"backend": capabilities.backend, "device": capabilities.device, "runtime_revision": capabilities.runtime_revision, "operations": list(capabilities.operations), "software_vulkan": capabilities.software_vulkan}
+
     def render(self, width: int = 80) -> str:
         state = self.state
         lines = ["Spaceslug-main :: Tiny workstation", "=" * min(width, 80),
                  f"[{state.screen}] backend={state.backend} status={state.status}",
                  "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [g] Vulkan GEMM  [q] quit", ""]
         if state.screen == "dashboard":
-            lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", f"CPU verified: {state.cpu_verified}", "GPU gate: CPU verification required before Vulkan"]
+            capabilities = self.runtime_capabilities()
+            lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", f"CPU verified: {state.cpu_verified}", f"runtime: {capabilities['device']} ops={','.join(capabilities['operations'])}", "GPU gate: CPU verification required before Vulkan"]
         elif state.screen == "dataset":
             lines += [f"root: {state.selected_path}", f"bundle: {state.dataset_bundle}", f"files: {len(state.selection.files) if state.selection else 0}", "filesystem picker: recursive .txt/.md/.jsonl"]
         elif state.screen == "model":

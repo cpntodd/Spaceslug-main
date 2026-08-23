@@ -24,6 +24,13 @@ class TuiTest(unittest.TestCase):
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 
+    def test_tui_reports_runtime_capabilities(self):
+        tui = SpaceslugTui()
+        capabilities = tui.runtime_capabilities()
+        self.assertIn("sgemm", capabilities["operations"])
+        self.assertIn("attention_kernel", capabilities["operations"])
+        self.assertTrue(capabilities["device"])
+
     def test_tui_gpu_forward_plan_is_not_run(self):
         tui = SpaceslugTui()
         report = tui.run_gpu_forward_plan([1, 2, 3])
