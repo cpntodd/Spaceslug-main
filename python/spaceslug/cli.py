@@ -49,6 +49,8 @@ def main() -> int:
     projected_train.add_argument("--learning-rate", type=float, default=0.2)
     projected_train.add_argument("--batch-size", type=int, default=1)
     projected_train.add_argument("--resume", type=Path)
+    projected_train.add_argument("--max-seconds", type=float)
+    projected_train.add_argument("--early-stop-patience", type=int)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
@@ -58,7 +60,7 @@ def main() -> int:
     if args.command == "tiny-attention-train":
         bundle = verify_bundle(args.bundle)
         result = run_projected_training(
-            bundle, ProjectedAttentionConfig(args.steps, args.learning_rate, args.batch_size),
+            bundle, ProjectedAttentionConfig(args.steps, args.learning_rate, args.batch_size, max_seconds=args.max_seconds, early_stop_patience=args.early_stop_patience),
             tokenizer=default_tokenizer(), checkpoint=args.checkpoint, artifact=args.artifact,
             experiment=args.experiment, resume=args.resume,
         )
