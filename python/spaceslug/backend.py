@@ -229,6 +229,63 @@ class BackendSession:
             return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_gpu_plan(tokens, model)
 
+    def execute_tiny_lora_train_graph(self, tokens: list[int], targets: list[int], mask: list[int], model: Any, adapter: Any, learning_rate: float = 0.01) -> ExecutionResult:
+        if model.hidden_size != 64 or model.vocab_size != 259 or adapter.rank != 4 or not tokens or len(tokens) > 128 or len(targets) != len(tokens) or len(mask) != len(tokens):
+            return ExecutionResult("not-run", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "graph requires Tiny V=259,H=64,rank=4 and equal token/target/mask lengths"}, {})
+        if not all(hasattr(self._native(), name) for name in ("spaceslug_lora_delta", "spaceslug_causal_loss", "spaceslug_lm_head_backward", "spaceslug_projection_backward", "spaceslug_attention_causal_backward", "spaceslug_lora_gradients_multi")):
+            return ExecutionResult("not-run", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "one or more graph ABIs unavailable"}, {})
+        from .positional_encoding import sinusoidal_positions
+        from .lora import LoRAProjectedTinyAttention
+        import math
+        h, vp, actual_rows, rows = 64, 320, len(tokens), 128
+        states = [model.embedding[token][:] for token in tokens]
+        if model.use_positions:
+            positions = sinusoidal_positions(actual_rows, h)
+            states = [[value + positions[i][c] for c, value in enumerate(state)] for i, state in enumerate(states)]
+        states += [[0.0] * h for _ in range(rows - actual_rows)]
+        flat = [value for state in states for value in state]
+        def mat(values): return [value for row in values for value in row]
+        projections = {}
+        for name in ("query", "key", "value"):
+            base = self._native_sgemm_values(flat, mat(getattr(model, name)), rows, h, h)
+            lm = adapter.matrices[name]
+            scaled_b = [value * (adapter.alpha / adapter.rank) for row in lm.B for value in row]
+            delta = self._native_lora_delta_values(flat, mat(lm.A), scaled_b, rows, adapter.rank)
+            projections[name] = [x + y for x, y in zip(base, delta)]
+        import array, ctypes, os
+        q, k, v = (array.array("f", projections[name]) for name in ("query", "key", "value"))
+        context = (ctypes.c_float * (rows * h))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_attention_causal((ctypes.c_float * len(q)).from_buffer(q), (ctypes.c_float * len(k)).from_buffer(k), (ctypes.c_float * len(v)).from_buffer(v), context, rows, h)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native causal attention returned {code}")
+        context_values = list(context)
+        output_base = self._native_sgemm_values(context_values, mat(model.output), rows, h, h)
+        out_lora = adapter.matrices["output"]
+        output_delta = self._native_lora_delta_values(context_values, mat(out_lora.A), [x * (adapter.alpha / adapter.rank) for row in out_lora.B for x in row], rows, adapter.rank)
+        projected = [x + y for x, y in zip(output_base, output_delta)]
+        lm = [model.lm_head[r][c] if c < model.vocab_size else 0.0 for r in range(h) for c in range(vp)]
+        logits = self._native_sgemm_values(projected, lm, rows, vp, h)
+        padded_targets = list(targets) + [0] * (rows - actual_rows)
+        padded_mask = list(mask) + [0] * (rows - actual_rows)
+        loss_result = self.execute_causal_loss(logits, padded_targets, padded_mask, vp)
+        if loss_result.status != "ok": return loss_result
+        dprojected = (ctypes.c_float * (rows * h))()
+        ll, gg = array.array("f", loss_result.output["dlogits"]), None
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_lm_head_backward((ctypes.c_float * len(ll)).from_buffer(ll), (ctypes.c_float * len(lm)).from_buffer(array.array("f", lm)), dprojected, rows, vp, h)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native lm head backward returned {code}")
+        return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "partial-graph", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "forward, loss, dLogits, and LM-head backward are GPU-composed; output/attention/QKV gradient/update integration remains"}, {"dprojected": list(dprojected), "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
+
     def execute_tiny_lora_backward_chain(self, q: list[float], k: list[float], v: list[float], d_context: list[float], projection_inputs: dict[str, list[float]], adapter_a: list[float], adapter_b: list[float], rank: int) -> ExecutionResult:
         tokens = len(q) // 64
         if tokens == 0 or tokens > 128 or any(len(values) != tokens * 64 for values in (k, v, d_context)) or rank < 1 or rank > 8 or len(adapter_a) != 4 * 64 * rank or len(adapter_b) != 4 * rank * 64:
