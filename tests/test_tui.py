@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 
 from spaceslug.tui import SpaceslugTui
+from tests.fixtures.tiny_acceptance import create_tiny_acceptance_bundle
 
 
 class TuiTest(unittest.TestCase):
@@ -22,6 +23,18 @@ class TuiTest(unittest.TestCase):
         self.assertIn("worm graph", rendered)
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
+
+    def test_cpu_verify_and_training_stream_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = create_tiny_acceptance_bundle(Path(directory) / "dataset.dts")
+            tui = SpaceslugTui()
+            tui.select_bundle(bundle)
+            verification = tui.verify_cpu()
+            self.assertTrue(verification["passed"])
+            metrics = tui.train_cpu()
+            self.assertLess(metrics["final_train_loss"], metrics["initial_train_loss"])
+            self.assertEqual(len(tui.state.loss_history), tui.state.steps * tui.state.epochs)
+            self.assertIn("CPU training complete", tui.state.status)
 
     def test_invalid_training_controls_fail(self):
         with self.assertRaises(ValueError):

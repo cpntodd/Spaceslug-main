@@ -10,9 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import curses
 from pathlib import Path
+import tempfile
 
+from .cpu_verification import verify_cpu_training
+from .dataset import verify_bundle
 from .filesystem_picker import FileSelection, pick_files
-from .model_profiles import profile_names, resolve_profile
+from .model_profiles import resolve_profile
+from .projected_attention_training import ProjectedAttentionConfig, train_projected_attention
+from .tokenizer import default_tokenizer
 
 
 @dataclass
@@ -20,6 +25,7 @@ class TuiState:
     screen: str = "dashboard"
     selected_path: Path | None = None
     selection: FileSelection | None = None
+    dataset_bundle: Path | None = None
     model_id: str = "Spaceslug-Tiny"
     model_config: dict = field(default_factory=lambda: resolve_profile("Spaceslug-Tiny"))
     steps: int = 10
@@ -27,6 +33,8 @@ class TuiState:
     loss_history: list[float] = field(default_factory=list)
     backend: str = "cpu-reference"
     status: str = "ready"
+    cpu_verified: bool = False
+    last_result: dict | None = None
 
 
 class SpaceslugTui:
@@ -41,6 +49,13 @@ class SpaceslugTui:
         self.state.screen = "dataset"
         self.state.status = f"selected {len(selection.files)} files"
         return selection
+
+    def select_bundle(self, path: str | Path) -> Path:
+        bundle = path if hasattr(path, "manifest") else verify_bundle(path)
+        self.state.dataset_bundle = bundle.root
+        self.state.screen = "dataset"
+        self.state.status = f"dataset verified: {bundle.manifest['revision']}"
+        return bundle.root
 
     def set_model(self, model_id: str, **overrides: object) -> dict:
         self.state.model_id = model_id
@@ -59,7 +74,41 @@ class SpaceslugTui:
     def add_loss(self, value: float) -> None:
         self.state.loss_history.append(float(value))
         self.state.screen = "training"
-        self.state.status = f"step {len(self.state.loss_history)}/{self.state.steps}"
+        self.state.status = f"step {len(self.state.loss_history)}/{self.state.steps * self.state.epochs}"
+
+    def verify_cpu(self, bundle_path: str | Path | None = None) -> dict:
+        path = bundle_path or self.state.dataset_bundle
+        if path is None:
+            raise ValueError("select a verified dataset bundle first")
+        result = verify_cpu_training(path, steps=min(self.state.steps, 2))
+        self.state.cpu_verified = result.passed
+        self.state.backend = result.backend
+        self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
+        return result.__dict__
+
+    def train_cpu(self, bundle_path: str | Path | None = None) -> dict:
+        path = bundle_path or self.state.dataset_bundle
+        if path is None:
+            raise ValueError("select a verified dataset bundle first")
+        if not self.state.cpu_verified:
+            self.verify_cpu(path)
+        bundle = path if hasattr(path, "manifest") else verify_bundle(path)
+        self.state.loss_history.clear()
+        self.state.screen, self.state.status = "training", "training CPU reference"
+        with tempfile.TemporaryDirectory(prefix="spaceslug-tui-") as directory:
+            model, _, metrics = train_projected_attention(
+                bundle,
+                ProjectedAttentionConfig(steps=self.state.steps * self.state.epochs, learning_rate=0.1),
+                tokenizer=default_tokenizer(),
+                on_step=lambda step, loss: self._record_training_loss(step, loss),
+            )
+        self.state.last_result = metrics
+        self.state.status = f"CPU training complete: {metrics['stopped_reason']}"
+        return metrics
+
+    def _record_training_loss(self, step: int, loss: float) -> None:
+        self.state.loss_history.append(float(loss))
+        self.state.status = f"step {step}/{self.state.steps * self.state.epochs}"
 
     def worm_graph(self, width: int = 48, height: int = 8) -> list[str]:
         values = self.state.loss_history[-width:]
@@ -77,11 +126,11 @@ class SpaceslugTui:
         state = self.state
         lines = ["Spaceslug-main :: Tiny workstation", "=" * min(width, 80),
                  f"[{state.screen}] backend={state.backend} status={state.status}",
-                 "[d] dataset  [m] model  [t] training  [q] quit", ""]
+                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [q] quit", ""]
         if state.screen == "dashboard":
-            lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", "GPU gate: CPU verification required before Vulkan"]
+            lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", f"CPU verified: {state.cpu_verified}", "GPU gate: CPU verification required before Vulkan"]
         elif state.screen == "dataset":
-            lines += [f"root: {state.selected_path}", f"files: {len(state.selection.files) if state.selection else 0}", "filesystem picker: recursive .txt/.md/.jsonl"]
+            lines += [f"root: {state.selected_path}", f"bundle: {state.dataset_bundle}", f"files: {len(state.selection.files) if state.selection else 0}", "filesystem picker: recursive .txt/.md/.jsonl"]
         elif state.screen == "model":
             lines += [f"profile: {state.model_id}", f"target parameters: {state.model_config['target_parameters']}", f"resolved: {state.model_config['estimated_parameters']}"]
         elif state.screen == "training":
@@ -111,6 +160,12 @@ class SpaceslugTui:
                 self.state.screen = "model"
             elif key == ord("t"):
                 self.state.screen = "training"
+            elif key == ord("v"):
+                self.state.screen = "training"
+                self.state.status = "use controller API to select bundle and verify"
+            elif key == ord("r"):
+                self.state.screen = "training"
+                self.state.status = "use controller API to start CPU training"
             elif key == curses.KEY_MOUSE:
                 _, x, y, _, _ = curses.getmouse()
                 if y == 3:
