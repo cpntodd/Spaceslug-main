@@ -14,6 +14,7 @@
 - Live textual worm graph from recorded loss points.
 - Projected training exposes an `on_step(step, loss)` callback so a future training service/TUI can update the graph without coupling rendering to optimization.
 - The TUI controller now verifies a selected `.dts` bundle, enforces the CPU gate, runs the configured steps × epochs, and receives the live loss series.
+- After CPU verification, the TUI can run the current Vulkan SGEMM parity gate and report RADV/lavapipe backend status; it still does not claim Tiny forward execution.
 - `spaceslug tiny-cpu-verify`: explicit CPU-reference acceptance gate.
 - Vulkan backend readiness report that names the current validated operation and refuses to claim Tiny GPU inference/training prematurely.
 

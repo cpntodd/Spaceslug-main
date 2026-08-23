@@ -136,7 +136,7 @@ class SpaceslugTui:
         state = self.state
         lines = ["Spaceslug-main :: Tiny workstation", "=" * min(width, 80),
                  f"[{state.screen}] backend={state.backend} status={state.status}",
-                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [q] quit", ""]
+                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [g] Vulkan GEMM  [q] quit", ""]
         if state.screen == "dashboard":
             lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", f"CPU verified: {state.cpu_verified}", "GPU gate: CPU verification required before Vulkan"]
         elif state.screen == "dataset":
@@ -176,6 +176,9 @@ class SpaceslugTui:
             elif key == ord("r"):
                 self.state.screen = "training"
                 self.state.status = "use controller API to start CPU training"
+            elif key == ord("g"):
+                self.state.screen = "training"
+                self.state.status = "use controller API to run Vulkan GEMM parity"
             elif key == curses.KEY_MOUSE:
                 _, x, y, _, _ = curses.getmouse()
                 if y == 3:
