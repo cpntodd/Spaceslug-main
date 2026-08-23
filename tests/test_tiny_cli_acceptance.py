@@ -5,6 +5,7 @@ import unittest
 
 from spaceslug.projected_attention_artifact import load_projected_artifact
 from spaceslug.regression import compare_reports
+from spaceslug.regression_series import load_regression_series, write_regression_series
 from spaceslug.projected_attention_inference import next_token
 from spaceslug.projected_attention_training import ProjectedAttentionConfig, run_projected_training
 from spaceslug.tokenizer import default_tokenizer
@@ -34,6 +35,11 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             self.assertTrue(comparison["pass"])
             self.assertEqual(comparison["runs"], 2)
             self.assertEqual(comparison["min_test_token_accuracy"], report["metrics"]["test_token_accuracy"])
+            series_path = write_regression_series(root / "series", "tiny-series", [report, report])
+            series = load_regression_series(series_path)
+            self.assertEqual(series["series_id"], "tiny-series")
+            self.assertTrue(series["comparison"]["pass"])
+            self.assertEqual(series["runs"][0]["config"], report["config"])
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from .tiny_dense_training import DenseTinyTrainingConfig, load_dense_checkpoint,
 from .tiny_dense_artifact import write_dense_tiny_artifact
 from .projected_attention_training import ProjectedAttentionConfig, run_projected_training
 from .regression import compare_reports
+from .regression_series import load_regression_series, write_regression_series
 from .tokenizer import default_tokenizer
 
 
@@ -56,12 +57,22 @@ def main() -> int:
     regression.add_argument("reports", nargs="+", type=Path)
     regression.add_argument("--max-loss-increase", type=float, default=0.0)
     regression.add_argument("--max-accuracy-drop", type=float, default=0.0)
+    series = subparsers.add_parser("tiny-regression-series")
+    series.add_argument("output", type=Path)
+    series.add_argument("reports", nargs="+", type=Path)
+    series.add_argument("--max-loss-increase", type=float, default=0.0)
+    series.add_argument("--max-accuracy-drop", type=float, default=0.0)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
         print(f"records={bundle.manifest['record_count']} splits={bundle.stats()}")
         return 0
+    if args.command == "tiny-regression-series":
+        reports = [__import__("json").loads(path.read_text(encoding="utf-8")) for path in args.reports]
+        record = write_regression_series(args.output, args.output.name, reports, max_loss_increase=args.max_loss_increase, max_accuracy_drop=args.max_accuracy_drop)
+        print(__import__("json").dumps(load_regression_series(record)["comparison"], sort_keys=True))
+        return 0 if load_regression_series(record)["comparison"]["pass"] else 1
     if args.command == "tiny-regression":
         reports = [__import__("json").loads(path.read_text(encoding="utf-8")) for path in args.reports]
         comparison = compare_reports(reports, max_loss_increase=args.max_loss_increase, max_accuracy_drop=args.max_accuracy_drop)
