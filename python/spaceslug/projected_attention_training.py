@@ -41,7 +41,7 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
 
 def save_projected_checkpoint(path: str | Path, model: ProjectedTinyAttentionModel, metrics: dict) -> None:
     payload = {"format": "spaceslug-tiny-projected-attention-checkpoint", "schema_version": 1,
-               "model": {name: getattr(model, name) for name in ("vocab_size", "hidden_size", "embedding", "query", "key", "value", "output", "lm_head")},
+               "model": {name: getattr(model, name) for name in ("vocab_size", "hidden_size", "use_positions", "embedding", "query", "key", "value", "output", "lm_head")},
                "metrics": metrics}
     Path(path).write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
@@ -51,7 +51,7 @@ def load_projected_checkpoint(path: str | Path) -> tuple[ProjectedTinyAttentionM
     if payload.get("format") != "spaceslug-tiny-projected-attention-checkpoint" or payload.get("schema_version") != 1:
         raise ValueError("unsupported projected attention checkpoint")
     data = payload["model"]
-    model = ProjectedTinyAttentionModel(data["vocab_size"], data["hidden_size"])
+    model = ProjectedTinyAttentionModel(data["vocab_size"], data["hidden_size"], data.get("use_positions", True))
     for name in ("embedding", "query", "key", "value", "output", "lm_head"):
         setattr(model, name, data[name])
     return model, payload["metrics"]
