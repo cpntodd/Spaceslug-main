@@ -20,6 +20,8 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             self.assertLess(metrics["final_train_loss"], metrics["initial_train_loss"])
             self.assertGreater(metrics["validation_loss"], 0.0)
             self.assertGreater(metrics["test_loss"], 0.0)
+            self.assertGreaterEqual(metrics["test_token_accuracy"], 0.0)
+            self.assertLessEqual(metrics["test_token_accuracy"], 1.0)
             checkpoint = Path(directory) / "attention.json"
             save_projected_checkpoint(checkpoint, model, optimizer_state, metrics)
             restored, restored_metrics, restored_optimizer = load_projected_checkpoint(checkpoint)

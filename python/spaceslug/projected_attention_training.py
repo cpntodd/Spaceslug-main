@@ -13,6 +13,7 @@ from .tokenizer import ByteTokenizer
 from .projected_attention_artifact import write_projected_artifact
 from .projected_attention_experiment import write_projected_experiment
 from .projected_attention_inference import next_token
+from .quality_metrics import token_accuracy
 
 
 @dataclass(frozen=True)
@@ -49,10 +50,12 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
         validation_loss = sum(model.loss(batch) for batch in validation_batches) / len(validation_batches)
     test_records = bundle.records("test")
     test_loss = None
+    test_accuracy = None
     if test_records:
         test_batches = target_only_batches(test_records, tokenizer, config.batch_size)
         test_loss = sum(model.loss(batch) for batch in test_batches) / len(test_batches)
-    metrics = {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "test_loss": test_loss, "optimizer_step": state.get("step", prior_steps + config.steps),
+        test_accuracy = token_accuracy(model, test_batches)
+    metrics = {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "test_loss": test_loss, "test_token_accuracy": test_accuracy, "optimizer_step": state.get("step", prior_steps + config.steps),
                "dataset_revision": bundle.manifest["revision"], "tokenizer_fingerprint": tokenizer.fingerprint(), "config": asdict(config)}
     return model, state, metrics
 
