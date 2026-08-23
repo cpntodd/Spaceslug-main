@@ -58,6 +58,9 @@ class BackendSession:
                 function = self._library.spaceslug_vector_add
                 function.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
                 function.restype = ctypes.c_int
+                sgemm = self._library.spaceslug_sgemm
+                sgemm.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+                sgemm.restype = ctypes.c_int
             except OSError as exc:
                 raise BackendError(f"failed to load {self._library_path}: {exc}") from exc
         return self._library
@@ -100,6 +103,18 @@ class BackendSession:
         if not completed.stdout.strip().endswith("PASS"):
             raise BackendError(f"vector_add did not pass: {completed.stdout.strip()}")
         return ExecutionResult("ok", "vector_add", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"operation_count": 1, "host_elapsed_seconds": time.perf_counter() - started, "software_vulkan": self.software_vulkan, "execution": "validated-executable"}, {"runtime_report": completed.stdout.strip()})
+
+    def execute_sgemm_native(self, a: list[float], b: list[float], m: int, n: int, k: int) -> ExecutionResult:
+        if len(a) != m * k or len(b) != k * n or m % 64 or n % 64 or k % 32:
+            raise BackendError("native sgemm dimensions or input lengths are invalid")
+        self._native()
+        import array
+        aa, bb, cc = (array.array("f", values) for values in (a, b, [0.0] * (m * n)))
+        error_value = ctypes.c_float()
+        code = self._library.spaceslug_sgemm((ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), (ctypes.c_float * len(cc)).from_buffer(cc), m, n, k, ctypes.byref(error_value))
+        if code != 0:
+            raise BackendError(f"native sgemm returned {code}")
+        return ExecutionResult("ok", "sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "max_relative_error": float(error_value.value)}, {"m": m, "n": n, "k": k, "first": float(cc[0])})
 
     def projected_attention_forward_plan(self, *, hidden_size: int, sequence_length: int, vocab_size: int) -> dict[str, Any]:
         if hidden_size <= 0 or sequence_length <= 0 or vocab_size <= 0:
