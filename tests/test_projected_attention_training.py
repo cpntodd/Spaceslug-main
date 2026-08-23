@@ -14,11 +14,12 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             bundle = verify_bundle(create_bundle(Path(directory) / "fixture.dts", "attention-fixture", {
                 "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}, {"record_id": "b", "prompt": "Q: ", "target": "b"}],
-                "validation": [{"record_id": "v", "prompt": "Q: ", "target": "a"}], "test": [],
+                "validation": [{"record_id": "v", "prompt": "Q: ", "target": "a"}], "test": [{"record_id": "t", "prompt": "Q: ", "target": "b"}],
             }).root)
             model, optimizer_state, metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=10, learning_rate=0.2, batch_size=2), tokenizer=default_tokenizer())
             self.assertLess(metrics["final_train_loss"], metrics["initial_train_loss"])
             self.assertGreater(metrics["validation_loss"], 0.0)
+            self.assertGreater(metrics["test_loss"], 0.0)
             checkpoint = Path(directory) / "attention.json"
             save_projected_checkpoint(checkpoint, model, optimizer_state, metrics)
             restored, restored_metrics, restored_optimizer = load_projected_checkpoint(checkpoint)
