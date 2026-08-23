@@ -36,7 +36,7 @@ The fixture is synthetic and the result is a correctness/reproducibility smoke, 
 
 ## Reproducible fixture/report reference
 
-`tests/fixtures/tiny_acceptance.py` defines the canonical `tiny-acceptance-v1` bundle shape used by acceptance tests. The inference acceptance test verifies that a checksum-verified artifact reproduces the report's recorded artifact revision and greedy next-token result.
+`tests/fixtures/tiny_acceptance.py` defines the canonical `tiny-acceptance-v1` bundle shape used by acceptance tests. `tests/test_tiny_cli_acceptance.py` runs the complete training workflow, verifies held-out test loss, loads the emitted artifact, and checks that its greedy next-token result matches the experiment report.
 
 ## Next gate
 
