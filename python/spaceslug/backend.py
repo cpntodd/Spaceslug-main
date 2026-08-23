@@ -79,6 +79,10 @@ class BackendSession:
                     lora_delta = self._library.spaceslug_lora_delta
                     lora_delta.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     lora_delta.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_attention_causal_backward"):
+                    attention_backward = self._library.spaceslug_attention_causal_backward
+                    attention_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+                    attention_backward.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_train_step"):
                     lora_train = self._library.spaceslug_lora_train_step
                     lora_train.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32]
@@ -103,6 +107,8 @@ class BackendSession:
                     operations.append("attention_causal_abi")
                 if hasattr(native, "spaceslug_lora_train_step"):
                     operations.append("lora_train_step_abi")
+                if hasattr(native, "spaceslug_attention_causal_backward"):
+                    operations.append("attention_causal_backward_abi")
                 if hasattr(native, "spaceslug_causal_loss"):
                     operations.append("causal_loss_abi")
             except BackendError:
@@ -217,6 +223,15 @@ class BackendSession:
             return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_gpu_plan(tokens, model)
 
+    def execute_attention_backward(self, q: list[float], k: list[float], v: list[float], d_output: list[float], mode: int) -> ExecutionResult:
+        tokens = len(q) // 64
+        if tokens == 0 or tokens > 128 or len(q) % 64 or any(len(values) != len(q) for values in (k, v, d_output)) or mode not in (0, 1, 2):
+            return ExecutionResult("not-run", "attention_causal_backward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "attention backward requires equal [T,64] tensors and mode 0/1/2"}, {})
+        if not hasattr(self._native(), "spaceslug_attention_causal_backward"):
+            return ExecutionResult("not-run", "attention_causal_backward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "attention backward ABI unavailable"}, {})
+        result = self._native_attention_backward(q, k, v, d_output, tokens, mode)
+        return ExecutionResult("ok", "attention_causal_backward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "native-cpu-gate", "gpu_execution": True, "mode": mode}, {"output": result, "tokens": tokens})
+
     def execute_causal_loss(self, logits: list[float], targets: list[int], mask: list[int], vocab: int) -> ExecutionResult:
         if not logits or len(targets) != len(mask) or len(logits) != len(targets) * vocab or vocab <= 0 or vocab > 320:
             return ExecutionResult("not-run", "causal_loss", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "loss requires logits[M,V], targets[M], mask[M], and V<=320"}, {})
@@ -283,6 +298,20 @@ class BackendSession:
         reference = LoRAProjectedTinyAttention(model, adapter).logits_for_tokens(tokens)
         parity = compare_float_arrays(logits, reference)
         return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
+
+    def _native_attention_backward(self, q: list[float], k: list[float], v: list[float], d_output: list[float], tokens: int, mode: int) -> list[float]:
+        import array, ctypes, os
+        qq, kk, vv, dd = (array.array("f", values) for values in (q, k, v, d_output))
+        result = (ctypes.c_float * (tokens * 64))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_attention_causal_backward((ctypes.c_float * len(qq)).from_buffer(qq), (ctypes.c_float * len(kk)).from_buffer(kk), (ctypes.c_float * len(vv)).from_buffer(vv), (ctypes.c_float * len(dd)).from_buffer(dd), result, tokens, 64, mode)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native attention backward returned {code}")
+        return list(result)
 
     def _native_causal_loss(self, logits: list[float], targets: list[int], mask: list[int], vocab: int) -> tuple[list[float], list[float]]:
         import array, ctypes, os
