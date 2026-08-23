@@ -16,15 +16,16 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
                 "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}, {"record_id": "b", "prompt": "Q: ", "target": "b"}],
                 "validation": [{"record_id": "v", "prompt": "Q: ", "target": "a"}], "test": [],
             }).root)
-            model, metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=10, learning_rate=0.2, batch_size=2), tokenizer=default_tokenizer())
+            model, optimizer_state, metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=10, learning_rate=0.2, batch_size=2), tokenizer=default_tokenizer())
             self.assertLess(metrics["final_train_loss"], metrics["initial_train_loss"])
             self.assertGreater(metrics["validation_loss"], 0.0)
             checkpoint = Path(directory) / "attention.json"
-            save_projected_checkpoint(checkpoint, model, metrics)
-            restored, restored_metrics = load_projected_checkpoint(checkpoint)
+            save_projected_checkpoint(checkpoint, model, optimizer_state, metrics)
+            restored, restored_metrics, restored_optimizer = load_projected_checkpoint(checkpoint)
             self.assertEqual(restored.query, model.query)
             self.assertEqual(restored.value, model.value)
             self.assertEqual(restored_metrics, metrics)
+            self.assertEqual(restored_optimizer, optimizer_state)
             record = json.loads(write_projected_experiment(Path(directory) / "run", "attention-run", metrics, code_revision="test").read_text(encoding="utf-8"))
             self.assertEqual(record["dataset_revision"], bundle.manifest["revision"])
             self.assertEqual(record["status"], "kept")
@@ -48,15 +49,16 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
                 "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}, {"record_id": "b", "prompt": "Q: ", "target": "b"}], "validation": [], "test": [],
             }).root)
             tokenizer = default_tokenizer()
-            first, first_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=2, learning_rate=0.1), tokenizer=tokenizer)
+            first, first_optimizer, first_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=2, learning_rate=0.1), tokenizer=tokenizer)
             checkpoint = root / "first.json"
-            save_projected_checkpoint(checkpoint, first, first_metrics)
-            restored, prior = load_projected_checkpoint(checkpoint)
-            resumed, resumed_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=3, learning_rate=0.1), tokenizer=tokenizer, model=restored, prior_steps=prior["optimizer_step"])
-            uninterrupted, uninterrupted_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=5, learning_rate=0.1), tokenizer=tokenizer)
+            save_projected_checkpoint(checkpoint, first, first_optimizer, first_metrics)
+            restored, prior, restored_optimizer = load_projected_checkpoint(checkpoint)
+            resumed, resumed_optimizer, resumed_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=3, learning_rate=0.1), tokenizer=tokenizer, model=restored, prior_steps=prior["optimizer_step"], optimizer_state=restored_optimizer)
+            uninterrupted, uninterrupted_optimizer, uninterrupted_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=5, learning_rate=0.1), tokenizer=tokenizer)
             self.assertEqual(resumed.query, uninterrupted.query)
             self.assertEqual(resumed.output, uninterrupted.output)
             self.assertEqual(resumed_metrics["optimizer_step"], uninterrupted_metrics["optimizer_step"])
+            self.assertEqual(resumed_optimizer, uninterrupted_optimizer)
 
 
 if __name__ == "__main__":

@@ -98,15 +98,26 @@ class ProjectedTinyAttentionModel:
     def loss(self, batch: CausalBatch) -> float:
         return self.loss_and_gradients(batch)[0]
 
-    def train_step(self, batch: CausalBatch, learning_rate: float) -> float:
-        if learning_rate <= 0.0:
-            raise ValueError("learning_rate must be positive")
+    def train_step(self, batch: CausalBatch, learning_rate: float, *, optimizer_state: dict | None = None, weight_decay: float = 0.0) -> float:
+        if learning_rate <= 0.0 or weight_decay < 0.0:
+            raise ValueError("learning_rate must be positive and weight_decay must not be negative")
         loss, gradients = self.loss_and_gradients(batch)
+        state = optimizer_state if optimizer_state is not None else {}
+        step = int(state.get("step", 0)) + 1
+        first = state.setdefault("first", {name: [[0.0] * self.hidden_size for _ in range(self.hidden_size)] for name in gradients})
+        second = state.setdefault("second", {name: [[0.0] * self.hidden_size for _ in range(self.hidden_size)] for name in gradients})
+        beta1, beta2, epsilon = 0.9, 0.999, 1e-8
         for name, matrix in gradients.items():
             parameter = getattr(self, name)
             for row in range(self.hidden_size):
                 for column in range(self.hidden_size):
-                    parameter[row][column] -= learning_rate * matrix[row][column]
+                    gradient = matrix[row][column]
+                    first[name][row][column] = beta1 * first[name][row][column] + (1.0 - beta1) * gradient
+                    second[name][row][column] = beta2 * second[name][row][column] + (1.0 - beta2) * gradient * gradient
+                    first_hat = first[name][row][column] / (1.0 - beta1**step)
+                    second_hat = second[name][row][column] / (1.0 - beta2**step)
+                    parameter[row][column] -= learning_rate * (first_hat / (math.sqrt(second_hat) + epsilon) + weight_decay * parameter[row][column])
+        state["step"] = step
         return loss
 
     def parameter(self, tensor: str, row: int, column: int) -> float:
