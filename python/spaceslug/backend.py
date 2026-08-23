@@ -79,6 +79,10 @@ class BackendSession:
                     lora_delta = self._library.spaceslug_lora_delta
                     lora_delta.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     lora_delta.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_lora_gradients_multi"):
+                    multi_grad = self._library.spaceslug_lora_gradients_multi
+                    multi_grad.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+                    multi_grad.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_attention_causal_backward"):
                     attention_backward = self._library.spaceslug_attention_causal_backward
                     attention_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
@@ -109,6 +113,8 @@ class BackendSession:
                     operations.append("lora_train_step_abi")
                 if hasattr(native, "spaceslug_attention_causal_backward"):
                     operations.append("attention_causal_backward_abi")
+                if hasattr(native, "spaceslug_lora_gradients_multi"):
+                    operations.append("lora_gradients_multi_abi")
                 if hasattr(native, "spaceslug_causal_loss"):
                     operations.append("causal_loss_abi")
             except BackendError:
@@ -223,6 +229,15 @@ class BackendSession:
             return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_gpu_plan(tokens, model)
 
+    def execute_lora_gradients_multi(self, x: list[float], dy: list[float], a: list[float], b: list[float], rank: int, target: int) -> ExecutionResult:
+        rows = len(x) // 64
+        if rows == 0 or rows > 128 or len(x) % 64 or len(dy) != len(x) or len(a) != 4 * 64 * rank or len(b) != 4 * rank * 64 or rank < 1 or rank > 8 or target < 0 or target > 3:
+            return ExecutionResult("not-run", "lora_gradients_multi", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "four-adapter gradient contract requires [M,64], packed 4-target factors, rank<=8, target 0..3"}, {})
+        if not hasattr(self._native(), "spaceslug_lora_gradients_multi"):
+            return ExecutionResult("not-run", "lora_gradients_multi", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "multi-adapter gradient ABI unavailable"}, {})
+        da, db = self._native_multi_gradients(x, dy, a, b, rows, rank, target)
+        return ExecutionResult("ok", "lora_gradients_multi", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "native-cpu-gate", "gpu_execution": True, "target": target}, {"dA": da, "dB": db})
+
     def execute_attention_backward(self, q: list[float], k: list[float], v: list[float], d_output: list[float], mode: int) -> ExecutionResult:
         tokens = len(q) // 64
         if tokens == 0 or tokens > 128 or len(q) % 64 or any(len(values) != len(q) for values in (k, v, d_output)) or mode not in (0, 1, 2):
@@ -298,6 +313,21 @@ class BackendSession:
         reference = LoRAProjectedTinyAttention(model, adapter).logits_for_tokens(tokens)
         parity = compare_float_arrays(logits, reference)
         return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
+
+    def _native_multi_gradients(self, x: list[float], dy: list[float], a: list[float], b: list[float], rows: int, rank: int, target: int) -> tuple[list[float], list[float]]:
+        import array, ctypes, os
+        xx, dd, aa, bb = (array.array("f", values) for values in (x, dy, a, b))
+        da = (ctypes.c_float * (4 * 64 * rank))()
+        db = (ctypes.c_float * (4 * rank * 64))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_lora_gradients_multi((ctypes.c_float * len(xx)).from_buffer(xx), (ctypes.c_float * len(dd)).from_buffer(dd), (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), da, db, rows, 64, rank, target)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native multi LoRA gradients returned {code}")
+        return list(da), list(db)
 
     def _native_attention_backward(self, q: list[float], k: list[float], v: list[float], d_output: list[float], tokens: int, mode: int) -> list[float]:
         import array, ctypes, os
