@@ -101,6 +101,21 @@ class BackendSession:
             raise BackendError(f"vector_add did not pass: {completed.stdout.strip()}")
         return ExecutionResult("ok", "vector_add", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"operation_count": 1, "host_elapsed_seconds": time.perf_counter() - started, "software_vulkan": self.software_vulkan, "execution": "validated-executable"}, {"runtime_report": completed.stdout.strip()})
 
+    def verify_tiny_gpu_prerequisites(self) -> dict[str, Any]:
+        """Report the currently available Vulkan gate without claiming Tiny GPU training."""
+        capabilities = self.capabilities()
+        return {
+            "backend": capabilities.backend,
+            "device": capabilities.device,
+            "runtime_revision": capabilities.runtime_revision,
+            "software_vulkan": capabilities.software_vulkan,
+            "tiny_gpu_inference": False,
+            "tiny_gpu_training": False,
+            "validated_operations": list(capabilities.operations),
+            "next_operation": "tensor_gemm_parity",
+            "cpu_gate_required": True,
+        }
+
     def _run(self, executable: str) -> subprocess.CompletedProcess[str]:
         path = self.build_dir / executable
         if not path.is_file(): raise BackendError(f"runtime executable is missing: {path}")
