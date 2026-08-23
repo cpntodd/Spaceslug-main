@@ -26,3 +26,4 @@ A devlog entry must not turn a design proposal into a claim of working behavior.
 - [0007 — Spaceslug-Tiny training readiness](devlog/0007-spaceslug-tiny-training-readiness.md)
 - [0008 — Projected Spaceslug-Tiny training acceptance](devlog/0008-projected-tiny-training-acceptance.md)
 - [0009 — Tiny resume and inference identity](devlog/0009-tiny-resume-and-inference-identity.md)
+- [0010 — Tiny CLI acceptance report](devlog/0010-tiny-cli-acceptance-report.md)

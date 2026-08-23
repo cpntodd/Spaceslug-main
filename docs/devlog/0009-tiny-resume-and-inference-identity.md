@@ -26,4 +26,4 @@ The reported inference is a deterministic CPU-reference smoke result, not a qual
 
 ## Next gate
 
-Add explicit artifact revision and checkpoint identity fields to the machine-readable experiment record, then run and archive the complete CLI acceptance report with held-out test loss and inference output.
+The complete CLI acceptance report now includes artifact revision, checkpoint schema/path, held-out test loss, and inference output. The next gate is to add a committed small fixture/report reference and enforce that artifact loading reproduces the recorded inference result.
