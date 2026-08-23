@@ -20,6 +20,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - Dataset-backed dense-model training, deterministic dense checkpoints, a checksummed dense artifact, and a schema-compatible `experiment.json` record. `spaceslug tiny-dense-train BUNDLE CHECKPOINT ARTIFACT EXPERIMENT` produces all four, and accepts `--resume` for deterministic checkpoint continuation.
 - Bounded dense-training controls: `--gradient-clip` and `--memory-budget-bytes`. The memory planner rejects an over-budget plan before any update is applied.
 - Deterministic padded causal batches with explicit target-only masks for prompt/completion records, plus a dependency-free causal self-attention semantic reference that proves future tokens cannot affect prior outputs.
+- A trainable single-head attention-scale reference integrated with those masks. Its analytic masked-loss gradient matches a centered finite difference, and fixed-batch optimization reduces the target-only loss.
 
 ## Acceptance evidence
 
@@ -27,7 +28,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 PYTHONPATH=python python3 -m unittest -v tests.test_tokenizer_artifact tests.test_tiny_training
 ```
 
-The acceptance tests establish deterministic UTF-8 tokenization, artifact checksum rejection, loss reduction on fixed `.dts` fixtures, checkpoint save/load identity, equality between resumed and uninterrupted AdamW training, agreement between analytic dense-model gradients and centered finite differences, a schema-compatible experiment record tied to the dataset revision, target-only loss masking that excludes prompt/PAD tokens, and strict causal attention semantics.
+The acceptance tests establish deterministic UTF-8 tokenization, artifact checksum rejection, loss reduction on fixed `.dts` fixtures, checkpoint save/load identity, equality between resumed and uninterrupted AdamW training, agreement between analytic dense-model gradients and centered finite differences, a schema-compatible experiment record tied to the dataset revision, target-only loss masking that excludes prompt/PAD tokens, strict causal attention semantics, and a trainable masked attention gradient.
 
 ## Limitations
 
@@ -35,4 +36,4 @@ The original dataset CLI produces the CPU-reference bigram artifact. The dense C
 
 ## Next gate
 
-Integrate the target-only batches and causal attention semantics into a trainable dense attention block with an independent numerical-gradient test. Preserve the existing deterministic resume, artifact, experiment-record, and preflight acceptance evidence as the model architecture grows.
+Expand the trainable attention reference from the isolated scale parameter to explicit Q/K/V/output projections, retaining independent numerical-gradient checks and target-only masking. Then connect that model to the deterministic dataset/checkpoint/artifact/experiment workflow.
