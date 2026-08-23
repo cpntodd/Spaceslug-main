@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import time
+from typing import Callable
 
 from .batching import target_only_batches
 from .dataset import DatasetBundle
@@ -40,7 +41,8 @@ class ProjectedAttentionConfig:
 
 
 def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionConfig, *, tokenizer: ByteTokenizer,
-                              model: ProjectedTinyAttentionModel | None = None, prior_steps: int = 0, optimizer_state: dict | None = None) -> tuple[ProjectedTinyAttentionModel, dict, dict]:
+                              model: ProjectedTinyAttentionModel | None = None, prior_steps: int = 0, optimizer_state: dict | None = None,
+                              on_step: Callable[[int, float], None] | None = None) -> tuple[ProjectedTinyAttentionModel, dict, dict]:
     config.validate()
     records = bundle.records("train")
     batches = target_only_batches(records, tokenizer, config.batch_size)
@@ -57,6 +59,8 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
             model.train_step(batch, config.learning_rate, optimizer_state=state, weight_decay=config.weight_decay)
         completed_steps += 1
         current_loss = sum(model.loss(batch) for batch in batches) / len(batches)
+        if on_step is not None:
+            on_step(prior_steps + completed_steps, current_loss)
         if current_loss < best_loss:
             best_loss, stale_steps = current_loss, 0
         else:
