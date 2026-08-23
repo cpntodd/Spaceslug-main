@@ -25,6 +25,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - Dataset-backed projected-attention training with target-only batches and deterministic checkpoint round-trip: `python/spaceslug/projected_attention_training.py`.
 - Deterministic sinusoidal positional encoding and a checksummed projected-attention artifact manifest with explicit architecture and position settings; artifacts can now be reloaded with checksum and tokenizer-fingerprint verification.
 - Projected-attention experiment records and validation-loss reporting are tied to the `.dts` revision and training configuration.
+- `spaceslug tiny-attention-train BUNDLE CHECKPOINT ARTIFACT EXPERIMENT` now integrates projected training, optional checkpoint resume, checkpoint output, checksummed artifact output, validation metrics, and experiment metadata in one command.
 
 ## Acceptance evidence
 
@@ -40,4 +41,4 @@ The original dataset CLI produces the CPU-reference bigram artifact. The dense C
 
 ## Next gate
 
-Connect projected-attention training, artifact creation, experiment records, and checkpoint resume to one CLI command. Then add explicit optimizer-state resume and acceptance of a produced model artifact before declaring the attention-based Tiny reference ready for broader training tests.
+Add explicit optimizer-state or update-rule resume semantics (the current projected path resumes weights but uses stateless SGD), verify a resumed CLI run against an uninterrupted run, and add a model-load inference smoke before declaring the attention-based Tiny reference ready for broader training tests.
