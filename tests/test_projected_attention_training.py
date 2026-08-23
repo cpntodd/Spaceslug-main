@@ -52,6 +52,18 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             self.assertTrue(experiment["metrics"]["artifact_revision"].startswith("sha256:"))
             self.assertEqual(experiment["metrics"]["checkpoint_identity"]["schema_version"], 2)
 
+    def test_time_budget_and_early_stop_are_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = verify_bundle(create_bundle(root / "fixture.dts", "budget", {
+                "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}], "validation": [], "test": [],
+            }).root)
+            model, _, metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=100, learning_rate=0.1, max_seconds=0.000001), tokenizer=default_tokenizer())
+            self.assertEqual(metrics["completed_steps"], 1)
+            self.assertEqual(metrics["stopped_reason"], "time_budget")
+            _, _, early_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=100, learning_rate=0.1, early_stop_patience=1), tokenizer=default_tokenizer(), model=model)
+            self.assertIn(early_metrics["stopped_reason"], ("early_stop", "steps"))
+
     def test_resume_rejects_different_dataset_revision(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
