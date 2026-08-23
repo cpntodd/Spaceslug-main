@@ -33,6 +33,7 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             comparison = compare_reports([report, report])
             self.assertTrue(comparison["pass"])
             self.assertEqual(comparison["runs"], 2)
+            self.assertEqual(comparison["min_test_token_accuracy"], report["metrics"]["test_token_accuracy"])
 
 
 if __name__ == "__main__":

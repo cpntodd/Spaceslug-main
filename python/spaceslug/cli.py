@@ -12,6 +12,7 @@ from .tiny_training import TinyTrainingConfig, save_training_checkpoint, train_t
 from .tiny_dense_training import DenseTinyTrainingConfig, load_dense_checkpoint, save_dense_checkpoint, train_dense_tiny, write_experiment_record
 from .tiny_dense_artifact import write_dense_tiny_artifact
 from .projected_attention_training import ProjectedAttentionConfig, run_projected_training
+from .regression import compare_reports
 from .tokenizer import default_tokenizer
 
 
@@ -51,12 +52,21 @@ def main() -> int:
     projected_train.add_argument("--resume", type=Path)
     projected_train.add_argument("--max-seconds", type=float)
     projected_train.add_argument("--early-stop-patience", type=int)
+    regression = subparsers.add_parser("tiny-regression")
+    regression.add_argument("reports", nargs="+", type=Path)
+    regression.add_argument("--max-loss-increase", type=float, default=0.0)
+    regression.add_argument("--max-accuracy-drop", type=float, default=0.0)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
         print(f"records={bundle.manifest['record_count']} splits={bundle.stats()}")
         return 0
+    if args.command == "tiny-regression":
+        reports = [__import__("json").loads(path.read_text(encoding="utf-8")) for path in args.reports]
+        comparison = compare_reports(reports, max_loss_increase=args.max_loss_increase, max_accuracy_drop=args.max_accuracy_drop)
+        print(__import__("json").dumps(comparison, sort_keys=True))
+        return 0 if comparison["pass"] else 1
     if args.command == "tiny-attention-train":
         bundle = verify_bundle(args.bundle)
         result = run_projected_training(
