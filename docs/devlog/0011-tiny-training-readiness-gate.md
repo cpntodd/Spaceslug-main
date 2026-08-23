@@ -47,6 +47,10 @@ Reports now distinguish `reproducibility: pass` from `quality: not-established`;
 
 `spaceslug tiny-regression-series OUTPUT REPORT...` writes a versioned `regression.json` containing run IDs, code/dataset revisions, complete configurations, thresholds, and loss/accuracy comparison. The committed fixture series passes with zero allowed regression.
 
-## Next gate
+## Multi-configuration regression gate
 
-Add a bounded multi-seed or multi-configuration fixture series and archive its report before considering broader Tiny experimentation.
+The end-to-end acceptance harness records a two-run bounded configuration series (`learning_rate=0.1` and `learning_rate=0.05`) with distinct experiment/configuration metadata and an explicit allowed loss-increase threshold.
+
+## Readiness conclusion
+
+The pre-0.5B Spaceslug-Tiny workflow is ready to start bounded CPU-reference training tests. It has reproducible data/artifacts, target-only batching, causal projected attention, analytic gradients, AdamW checkpoint resume, memory/time/early-stop bounds, validation and held-out metrics, inference verification, provenance, acceptance classification, and persisted regression-series comparison. This does not claim useful model quality, GUI readiness, Vulkan execution, or production-scale Tiny parameters.
