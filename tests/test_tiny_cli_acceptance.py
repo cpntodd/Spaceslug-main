@@ -20,6 +20,8 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             model, tokenizer, manifest = load_projected_artifact(root / "artifact.spaceslug")
             self.assertEqual(report["metrics"]["artifact_revision"], manifest["revision"])
             self.assertGreater(report["metrics"]["test_loss"], 0.0)
+            self.assertGreaterEqual(report["metrics"]["test_token_accuracy"], 0.0)
+            self.assertLessEqual(report["metrics"]["test_token_accuracy"], 1.0)
             self.assertEqual(report["metrics"]["inference"]["next_token"], next_token(model, tokenizer, "Q: "))
             self.assertEqual(report["code_revision"], "acceptance-test")
             self.assertEqual(report["runtime_revision"], "not-used")
