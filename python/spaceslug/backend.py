@@ -71,6 +71,10 @@ class BackendSession:
                     causal = self._library.spaceslug_attention_causal
                     causal.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     causal.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_lora_train_step"):
+                    lora_train = self._library.spaceslug_lora_train_step
+                    lora_train.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32]
+                    lora_train.restype = ctypes.c_int
             except OSError as exc:
                 raise BackendError(f"failed to load {self._library_path}: {exc}") from exc
         return self._library
@@ -86,8 +90,11 @@ class BackendSession:
             operations.append("attention_kernel")
         if self._library_path.is_file():
             try:
-                if hasattr(self._native(), "spaceslug_attention_causal"):
+                native = self._native()
+                if hasattr(native, "spaceslug_attention_causal"):
                     operations.append("attention_causal_abi")
+                if hasattr(native, "spaceslug_lora_train_step"):
+                    operations.append("lora_train_step_abi")
             except BackendError:
                 pass
         return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None)
@@ -156,13 +163,39 @@ class BackendSession:
             result.metrics["parity"] = "cpu-projection-output"
         return result
 
-    def execute_tiny_lora(self, x: list[float], a: list[float], b: list[float], rank: int = 4, learning_rate: float = 0.01) -> ExecutionResult:
-        if rank != 4 or len(x) % 64 or len(a) != 64 * rank or len(b) != rank * 64:
-            return ExecutionResult("not-run", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "LoRA MVP requires rank=4 and H=64", "rank": rank}, {"rows": len(x) // 64 if x else 0})
-        return ExecutionResult("not-run", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward ABI is not yet available", "rank": rank, "learning_rate": learning_rate}, {"rows": len(x) // 64})
+    def execute_tiny_lora(self, x: list[float], a: list[float], b: list[float], dy: list[float] | None = None, rank: int = 4, learning_rate: float = 0.01) -> ExecutionResult:
+        rows = len(x) // 64 if x else 0
+        if rank != 4 or rows == 0 or rows > 128 or len(x) % 64 or len(a) != 64 * rank or len(b) != rank * 64:
+            return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "LoRA MVP requires 1<=M<=128, rank=4, and H=64", "rank": rank}, {"rows": rows})
+        if dy is None or len(dy) != len(x):
+            return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "train-step requires dY[M,64]", "rank": rank}, {"rows": rows})
+        self._native()
+        if not hasattr(self._library, "spaceslug_lora_train_step"):
+            return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA train-step ABI is unavailable", "rank": rank}, {"rows": rows})
+        import array, ctypes, os
+        xx, dd, aa, bb = (array.array("f", values) for values in (x, dy, a, b))
+        yy = (ctypes.c_float * len(xx))()
+        a_before, b_before = aa.tolist(), bb.tolist()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_lora_train_step((ctypes.c_float * len(xx)).from_buffer(xx), (ctypes.c_float * len(dd)).from_buffer(dd), (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), yy, learning_rate, rows, rank)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native LoRA train-step returned {code}")
+        y_ref = [sum(x[row * 64 + k] * a_before[k * rank + r] * b_before[r * 64 + column] for r in range(rank) for k in range(64)) for row in range(rows) for column in range(64)]
+        da = [sum(x[row * 64 + k] * dy[row * 64 + column] * b_before[r * 64 + column] for row in range(rows) for column in range(64)) for k in range(64) for r in range(rank)]
+        db = [sum(sum(x[row * 64 + k] * a_before[k * rank + r] for k in range(64)) * dy[row * 64 + column] for row in range(rows)) for r in range(rank) for column in range(64)]
+        a_ref = [value - learning_rate * gradient for value, gradient in zip(a_before, da)]
+        b_ref = [value - learning_rate * gradient for value, gradient in zip(b_before, db)]
+        y_parity, a_parity, b_parity = compare_float_arrays(list(yy), y_ref), compare_float_arrays(aa.tolist(), a_ref), compare_float_arrays(bb.tolist(), b_ref)
+        passed = all(report["status"] == "pass" for report in (y_parity, a_parity, b_parity))
+        return ExecutionResult("ok" if passed else "error", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "gpu_execution": passed, "rank": rank, "forward": y_parity, "dA_update": a_parity, "dB_update": b_parity}, {"y": list(yy), "a": aa.tolist(), "b": bb.tolist(), "rows": rows})
 
     def execute_tiny_lora_plan(self, model: Any, rank: int = 4) -> ExecutionResult:
-        return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward/backward/update kernels are not implemented", "rank": rank}, {"supported_base": model.hidden_size == 64 and model.vocab_size == 259})
+        supported = model.hidden_size == 64 and model.vocab_size == 259 and rank == 4 and hasattr(self._native(), "spaceslug_lora_train_step")
+        return ExecutionResult("ready" if supported else "not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference-required", "reason": "supply X and dY tensors to execute the native LoRA train-step" if supported else "LoRA MVP requires H=64, V=259, rank=4, and native ABI", "rank": rank, "gpu_execution": False}, {"supported_base": supported})
 
     def execute_projected_attention_forward(self, tokens: list[int], model: Any) -> ExecutionResult:
         """CPU-authoritative forward reference."""

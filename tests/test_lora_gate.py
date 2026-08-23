@@ -7,11 +7,11 @@ from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
 class LoraGateTest(unittest.TestCase):
     def test_lora_gpu_status_is_explicitly_not_run(self):
-        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259, 64))
         result = session.run_lora_plan()
-        self.assertEqual(result["status"], "not-run")
+        self.assertEqual(result["status"], "ready")
         self.assertFalse(result["gpu_execution"])
-        self.assertIn("LoRA", result["reason"])
+        self.assertIn("supply X and dY", result["reason"])
         self.assertEqual(result["rank"], 4)
 
     def test_lora_tensor_api_has_structured_not_run_result(self):
