@@ -33,7 +33,11 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability() -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": False, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "boundary": "per-step GPU tensor orchestration with transient ABI buffers; no persistent device-resident loop"}
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": False, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "persistent_command_buffer": False, "boundary": "per-step GPU tensor orchestration with transient ABI buffers; no persistent device-resident loop"}
+
+
+def gpu_lora_training_plan() -> dict[str, Any]:
+    return {"operation": "tiny_lora_gpu_training", "status": "bounded-host-orchestrated", "steps": ["gpu_lora_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd"], "buffers": "transient-per-ABI-call", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["persistent-device-resident-buffers", "command-buffer-reuse", "gradient-accumulation", "adamw", "dataset-training"]}
 
 
 class GpuLoRATrainer:

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from spaceslug.backend import BackendSession
-from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, gpu_lora_capability, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
+from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, gpu_lora_capability, gpu_lora_training_plan, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
 from spaceslug.lora import TinyLoRAAdapter
 from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
@@ -27,6 +27,13 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertFalse(capability["device_resident"])
         self.assertFalse(capability["adamw"])
         self.assertFalse(capability["dataset_training"])
+        self.assertFalse(capability["persistent_command_buffer"])
+
+    def test_training_plan_lists_all_gpu_stages_and_boundaries(self):
+        plan = gpu_lora_training_plan()
+        self.assertEqual(plan["status"], "bounded-host-orchestrated")
+        self.assertIn("gpu_multi_adapter_sgd", plan["steps"])
+        self.assertIn("persistent-device-resident-buffers", plan["unsupported"])
 
     def test_repeated_gpu_steps_update_adapter_and_checkpoint(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
