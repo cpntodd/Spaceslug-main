@@ -30,6 +30,8 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             record = json.loads(write_projected_experiment(Path(directory) / "run", "attention-run", metrics, code_revision="test").read_text(encoding="utf-8"))
             self.assertEqual(record["dataset_revision"], bundle.manifest["revision"])
             self.assertEqual(record["status"], "kept")
+            self.assertEqual(record["runtime_revision"], "not-used")
+            self.assertEqual(record["command"], "")
 
     def test_integrated_run_produces_checkpoint_artifact_and_experiment(self):
         with tempfile.TemporaryDirectory() as directory:

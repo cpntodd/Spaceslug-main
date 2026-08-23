@@ -22,6 +22,8 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             self.assertGreater(report["metrics"]["test_loss"], 0.0)
             self.assertEqual(report["metrics"]["inference"]["next_token"], next_token(model, tokenizer, "Q: "))
             self.assertEqual(report["code_revision"], "acceptance-test")
+            self.assertEqual(report["runtime_revision"], "not-used")
+            self.assertEqual(report["command"], "spaceslug tiny-attention-train")
 
 
 if __name__ == "__main__":

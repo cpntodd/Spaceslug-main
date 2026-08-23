@@ -100,7 +100,7 @@ def run_projected_training(
     metrics["artifact_revision"] = manifest["revision"]
     metrics["checkpoint_identity"] = {"path": str(checkpoint), "schema_version": 2}
     metrics["inference"] = {"prompt": "Q: ", "next_token": next_token(model, tokenizer, "Q: ")}
-    experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision)
+    experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision, command="spaceslug tiny-attention-train")
     return {"metrics": metrics, "artifact_revision": manifest["revision"], "experiment": str(experiment_path)}
 
 
