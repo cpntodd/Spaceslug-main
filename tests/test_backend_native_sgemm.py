@@ -13,6 +13,8 @@ class NativeSgemmTest(unittest.TestCase):
         self.assertEqual(result.operation, "sgemm")
         self.assertEqual(result.output["first"], 64.0)
         self.assertEqual(result.metrics["parity"], "cpu-reference")
+        self.assertLessEqual(result.metrics["max_relative_error"], 1e-3)
+        self.assertEqual(len(result.output["values"]), 64 * 64)
 
     def test_projected_qkv_uses_native_sgemm_for_padded_shape(self):
         result = self.session.execute_projected_qkv([1.0] * (64 * 64), [2.0] * (64 * 64), 64, 64)
