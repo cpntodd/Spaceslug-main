@@ -26,7 +26,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - Deterministic sinusoidal positional encoding and a checksummed projected-attention artifact manifest with explicit architecture and position settings; artifacts can now be reloaded with checksum and tokenizer-fingerprint verification.
 - Projected-attention experiment records and validation-loss reporting are tied to the `.dts` revision and training configuration.
 - `spaceslug tiny-attention-train BUNDLE CHECKPOINT ARTIFACT EXPERIMENT` now integrates projected training, optional checkpoint resume, checkpoint output, checksummed artifact output, validation metrics, and experiment metadata in one command.
-- Resume parity is accepted against uninterrupted stateless-SGD training, and a loaded projected artifact produces a deterministic greedy next-token result through `projected_attention_inference.py`.
+- Projected checkpoints now persist AdamW first/second moments and step state (schema version 2). Resume parity is accepted against uninterrupted AdamW training, and a loaded projected artifact produces a deterministic greedy next-token result through `projected_attention_inference.py`.
 
 ## Acceptance evidence
 
@@ -42,4 +42,4 @@ The original dataset CLI produces the CPU-reference bigram artifact. The dense C
 
 ## Next gate
 
-Add explicit optimizer-state metadata and a CLI resume acceptance run (the current projected path resumes weights with stateless SGD), then add a complete train→artifact-load→inference report before declaring the attention-based Tiny reference ready for broader training tests.
+Add a CLI resume acceptance run using the persisted AdamW state, and add a complete train→artifact-load→inference report before declaring the attention-based Tiny reference ready for broader training tests.
