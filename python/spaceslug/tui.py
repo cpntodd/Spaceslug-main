@@ -89,6 +89,15 @@ class SpaceslugTui:
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
         return result.__dict__
 
+    def run_attention_gate(self, *, tokens: int = 128, hidden_size: int = 64) -> dict:
+        from .backend import BackendSession
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        values = [1.0] * (tokens * hidden_size)
+        report = session.run_attention_gate(values, values, values, tokens, hidden_size)
+        self.state.backend = report["backend"]
+        self.state.status = f"attention gate: {report['status']}"
+        return report
+
     def run_gpu_chain_plan(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
         from .backend import BackendSession
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))
@@ -183,7 +192,7 @@ class SpaceslugTui:
         state = self.state
         lines = ["Spaceslug-main :: Tiny workstation", "=" * min(width, 80),
                  f"[{state.screen}] backend={state.backend} status={state.status}",
-                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [i] CPU inference  [g] Vulkan GEMM  [h] GPU chain  [q] quit", ""]
+                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [i] CPU inference  [g] Vulkan GEMM  [a] attention gate  [h] GPU chain  [q] quit", ""]
         if state.screen == "dashboard":
             capabilities = self.runtime_capabilities()
             lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", f"CPU verified: {state.cpu_verified}", f"runtime: {capabilities['device']} ops={','.join(capabilities['operations'])}", "GPU gate: CPU verification required before Vulkan"]
@@ -233,6 +242,9 @@ class SpaceslugTui:
             elif key == ord("h"):
                 self.state.screen = "training"
                 self.state.status = "use controller API to inspect GPU chain"
+            elif key == ord("a"):
+                self.state.screen = "training"
+                self.state.status = "use controller API to run attention gate"
             elif key == curses.KEY_MOUSE:
                 _, x, y, _, _ = curses.getmouse()
                 if y == 3:

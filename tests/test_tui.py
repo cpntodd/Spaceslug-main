@@ -33,6 +33,13 @@ class TuiTest(unittest.TestCase):
         self.assertIn("attention_kernel", capabilities["operations"])
         self.assertTrue(capabilities["device"])
 
+    def test_tui_attention_gate_reports_radv(self):
+        tui = SpaceslugTui()
+        report = tui.run_attention_gate()
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["parity"], "cpu-reference")
+        self.assertIn("RX 580", report["device"])
+
     def test_tui_gpu_chain_plan_displays_steps(self):
         tui = SpaceslugTui()
         report = tui.run_gpu_chain_plan([1, 2, 3])
