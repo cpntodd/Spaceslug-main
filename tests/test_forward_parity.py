@@ -1,7 +1,8 @@
 import unittest
 
 from spaceslug.backend import BackendSession
-from spaceslug.forward_parity import compare_gpu_logits, record_cpu_forward
+from spaceslug.forward_parity import build_gpu_forward_report, compare_gpu_logits, record_cpu_forward
+from spaceslug.backend import ExecutionResult
 from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
 
@@ -13,6 +14,10 @@ class ForwardParityTest(unittest.TestCase):
         self.assertEqual(result["parity"]["status"], "pass")
         self.assertTrue(result["gpu_execution"])
         self.assertEqual(result["gpu_backend"], "vulkan-radv")
+        gpu = ExecutionResult("ok", "tiny_projected_attention_forward", "vulkan-radv", "runtime", "RX580", False, {}, {"logits": record["logits"]})
+        structured = build_gpu_forward_report(record, gpu)
+        self.assertEqual(structured["parity"]["status"], "pass")
+        self.assertEqual(structured["device"], "RX580")
 
 
 if __name__ == "__main__":
