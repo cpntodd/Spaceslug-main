@@ -40,11 +40,19 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(report["parity"], "cpu-reference")
         self.assertIn("RX 580", report["device"])
 
-    def test_tui_lora_plan_is_explicitly_not_run(self):
+    def test_tui_runs_gpu_lora_train_step(self):
+        tui = SpaceslugTui()
+        report = tui.run_lora_train_step([0.01] * 64, [0.02] * 64, [0.01] * 256, [0.02] * 256, learning_rate=0.05)
+        self.assertEqual(report["status"], "ok")
+        self.assertTrue(report["gpu_execution"])
+        self.assertIn("GPU LoRA train: ok", tui.state.status)
+
+    def test_tui_lora_plan_is_ready_without_execution_claim(self):
         tui = SpaceslugTui()
         report = tui.run_lora_plan()
-        self.assertEqual(report["status"], "not-run")
-        self.assertIn("GPU LoRA: not-run", tui.state.status)
+        self.assertEqual(report["status"], "ready")
+        self.assertFalse(report["gpu_execution"])
+        self.assertIn("GPU LoRA: ready", tui.state.status)
 
     def test_tui_gpu_chain_plan_displays_steps(self):
         tui = SpaceslugTui()

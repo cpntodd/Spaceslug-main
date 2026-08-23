@@ -100,9 +100,17 @@ class SpaceslugTui:
 
     def run_lora_plan(self, rank: int = 4) -> dict:
         from .backend import BackendSession
-        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259, 64))
         report = session.run_lora_plan(rank)
         self.state.status = f"GPU LoRA: {report['status']}"
+        return report
+
+    def run_lora_train_step(self, x: list[float], dy: list[float], a: list[float], b: list[float], rank: int = 4, learning_rate: float = 0.01) -> dict:
+        from .backend import BackendSession
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259, 64))
+        report = session.run_lora_train_step(x, dy, a, b, rank=rank, learning_rate=learning_rate)
+        self.state.status = f"GPU LoRA train: {report['status']}"
+        self.state.backend = report["backend"]
         return report
 
     def run_gpu_chain_plan(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
