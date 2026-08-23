@@ -19,6 +19,10 @@ The committed fixture `tiny-acceptance-v1` now runs through the complete CPU-ref
 
 The current fixture report is reproducible with final train loss `5.537153225016332`, validation loss `5.54318378364119`, test loss `5.531122666391473`, test token accuracy `0.0`, and inference token ID `10` for `Q: `. The zero accuracy is explicitly reported and is not treated as a quality pass.
 
+## Bounded training policy
+
+Projected Tiny training accepts `--max-seconds` and `--early-stop-patience`. Each run reports `completed_steps` and `stopped_reason` (`steps`, `time_budget`, or `early_stop`). The CLI exposes both controls so experiments cannot silently run without a declared bound.
+
 ## Acceptance command
 
 ```text
@@ -33,4 +37,4 @@ The complete suite passes. `tests/test_tiny_cli_acceptance.py` is the end-to-end
 
 ## Next gate
 
-Add a bounded training budget/early-stop policy and a report-level acceptance status that distinguishes reproducibility success from quality success. Do not promote this synthetic fixture to a useful-model claim.
+Add a report-level acceptance status that distinguishes reproducibility success from quality success, and add a bounded multi-run regression comparison before promoting this workflow beyond synthetic-fixture testing.
