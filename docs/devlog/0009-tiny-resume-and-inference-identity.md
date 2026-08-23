@@ -9,6 +9,7 @@
 
 - Resume now fails closed when checkpoint dataset revision, tokenizer fingerprint, batch size, optimizer, or weight decay is incompatible with the requested run.
 - Projected experiment metrics include the deterministic inference prompt (`Q: `) and greedy next-token ID produced by the trained model.
+- Training metrics now include held-out `test_loss` when the `.dts` test split is non-empty.
 - Acceptance coverage verifies incompatible dataset rejection and experiment inference metadata.
 
 ## Evidence
@@ -25,4 +26,4 @@ The reported inference is a deterministic CPU-reference smoke result, not a qual
 
 ## Next gate
 
-Add a held-out test-split metric and make the complete CLI acceptance report include artifact revision, inference result, and test loss in one machine-readable record.
+Add explicit artifact revision and checkpoint identity fields to the machine-readable experiment record, then run and archive the complete CLI acceptance report with held-out test loss and inference output.
