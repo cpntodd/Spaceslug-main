@@ -15,7 +15,7 @@ def build_gpu_forward_report(cpu_record: dict, gpu_result, *, tolerance: float =
     """Compare a structured GPU execution result against a CPU baseline."""
     gpu_logits = gpu_result.output.get("logits")
     if gpu_logits is None:
-        return {"operation": cpu_record["operation"], "cpu_backend": cpu_record["backend"], "gpu_backend": gpu_result.backend, "gpu_execution": False, "parity": {"status": "not-run", "reason": "GPU result does not contain logits"}}
+        return {"operation": cpu_record["operation"], "cpu_backend": cpu_record["backend"], "gpu_backend": gpu_result.backend, "gpu_execution": False, "parity": {"status": "not-run", "reason": gpu_result.metrics.get("reason", "GPU result does not contain logits")}, "runtime_revision": gpu_result.runtime_revision, "device": gpu_result.device}
     return compare_gpu_logits(cpu_record, gpu_logits, tolerance=tolerance) | {"runtime_revision": gpu_result.runtime_revision, "device": gpu_result.device}
 
 

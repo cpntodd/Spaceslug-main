@@ -6,6 +6,13 @@ from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
 
 class InferenceSessionTest(unittest.TestCase):
+    def test_gpu_plan_is_explicitly_not_run(self):
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        result = session.run_gpu_plan([1, 2, 3])
+        self.assertEqual(result["parity"]["status"], "not-run")
+        self.assertIn("not implemented", result["parity"]["reason"])
+        self.assertFalse(result["gpu_execution"])
+
     def test_cpu_session_records_backend_and_deterministic_token(self):
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
         first = session.next_token([1, 2, 3])

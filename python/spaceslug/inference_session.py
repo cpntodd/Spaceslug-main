@@ -19,6 +19,10 @@ class InferenceSession:
         self.last_record = record
         return record
 
+    def run_gpu_plan(self, tokens: list[int]) -> dict:
+        gpu_result = self.backend.execute_projected_attention_gpu_plan(tokens, self.model)
+        return self.compare_gpu_result(tokens, gpu_result)
+
     def compare_gpu_result(self, tokens: list[int], gpu_result) -> dict:
         cpu_record = self.run(tokens)
         return build_gpu_forward_report(cpu_record, gpu_result)

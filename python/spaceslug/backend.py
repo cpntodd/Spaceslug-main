@@ -141,6 +141,10 @@ class BackendSession:
         """Current explicit forward dispatcher; GPU path is gated and not yet active."""
         return self.execute_projected_attention_cpu_fallback(tokens, model)
 
+    def execute_projected_attention_gpu_plan(self, tokens: list[int], model: Any) -> ExecutionResult:
+        plan = self.projected_attention_forward_plan(hidden_size=model.hidden_size, sequence_length=len(tokens), vocab_size=model.vocab_size)
+        return ExecutionResult("not-run", plan["operation"], "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "causal attention Vulkan orchestration is not implemented"}, {"plan": plan})
+
     def execute_projected_attention_cpu_fallback(self, tokens: list[int], model: Any) -> ExecutionResult:
         logits = model.logits_for_tokens(tokens)
         return ExecutionResult("ok", "tiny_projected_attention_forward", "cpu-reference", self.runtime_revision, None, True, {"parity": "cpu-reference", "gpu_execution": False}, {"logits": logits, "token_count": len(tokens)})
