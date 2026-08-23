@@ -24,7 +24,9 @@ Machine-readable report fields were verified:
   "artifact_revision": "sha256:8da6da4baf651d5d4aa02914a332748588b9328271b10635bca0ba51b3e1c32e",
   "checkpoint_identity": {"schema_version": 2},
   "inference": {"prompt": "Q: ", "next_token": 10},
-  "test_loss": 5.531122666391473
+  "test_loss": 5.531122666391473,
+  "test_token_accuracy": 0.0,
+  "validation_loss": 5.54318378364119
 }
 ```
 
@@ -32,7 +34,7 @@ The artifact was separately loaded with checksum and tokenizer verification in t
 
 ## Limitations
 
-The fixture is synthetic and the result is a correctness/reproducibility smoke, not a language-quality or performance claim. The model remains CPU-reference-only and small.
+The fixture is synthetic and the result is a correctness/reproducibility smoke, not a language-quality or performance claim. The model remains CPU-reference-only and small. The recorded `test_token_accuracy` is `0.0` on this two-record fixture; this is reported honestly and is not treated as a quality pass.
 
 ## Reproducible fixture/report reference
 
