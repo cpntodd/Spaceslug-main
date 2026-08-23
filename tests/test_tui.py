@@ -24,6 +24,13 @@ class TuiTest(unittest.TestCase):
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 
+    def test_cpu_inference_updates_backend_and_output(self):
+        tui = SpaceslugTui()
+        record = tui.run_cpu_inference([1, 2, 3])
+        self.assertEqual(record["backend"], "cpu-reference")
+        self.assertFalse(record["gpu_execution"])
+        self.assertIn("next token", tui.state.status)
+
     def test_gpu_forward_plan_exposes_resolved_contract(self):
         tui = SpaceslugTui()
         plan = tui.plan_gpu_forward("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")

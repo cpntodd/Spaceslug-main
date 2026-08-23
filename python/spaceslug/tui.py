@@ -16,6 +16,8 @@ from .cpu_verification import verify_cpu_training
 from .dataset import verify_bundle
 from .filesystem_picker import FileSelection, pick_files
 from .gpu_gate import run_tiny_gemm_gate
+from .inference_session import InferenceSession
+from .projected_attention_reference import ProjectedTinyAttentionModel
 from .model_profiles import resolve_profile
 from .projected_attention_training import ProjectedAttentionConfig, train_projected_attention
 from .tokenizer import default_tokenizer
@@ -86,6 +88,15 @@ class SpaceslugTui:
         self.state.backend = result.backend
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
         return result.__dict__
+
+    def run_cpu_inference(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
+        from .backend import BackendSession
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))
+        record = session.run(tokens)
+        self.state.screen = "dashboard"
+        self.state.backend = record["backend"]
+        self.state.status = f"CPU inference complete: next token {session.next_token(tokens)}"
+        return record
 
     def plan_gpu_forward(self, runtime_root: str | Path, runtime_revision: str) -> dict:
         from .backend import BackendSession
