@@ -1,5 +1,7 @@
 import unittest
 from spaceslug.backend import BackendSession
+from spaceslug.inference_session import InferenceSession
+from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
 class LoraGpuTest(unittest.TestCase):
     def run_train_step(self, software_vulkan=False):
@@ -23,6 +25,13 @@ class LoraGpuTest(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(result.metrics["gpu_execution"])
         self.assertEqual(result.metrics["forward"]["status"], "pass")
+
+    def test_session_reports_gpu_lora_train_step(self):
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259, 64))
+        result = session.run_lora_train_step([0.01] * 64, [0.02] * 64, [0.01] * 256, [0.02] * 256, learning_rate=0.05)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["gpu_execution"])
+        self.assertEqual(result["forward"]["status"], "pass")
 
     def test_lora_train_requires_dy(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")

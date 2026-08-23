@@ -25,7 +25,11 @@ class InferenceSession:
 
     def run_lora_plan(self, rank: int = 4) -> dict:
         result = self.backend.execute_tiny_lora_plan(self.model, rank)
-        return {"operation": result.operation, "status": result.status, "backend": result.backend, "parity": result.metrics.get("parity"), "reason": result.metrics.get("reason"), "rank": result.metrics.get("rank"), "runtime_revision": result.runtime_revision, "device": result.device, "gpu_execution": False}
+        return {"operation": result.operation, "status": result.status, "backend": result.backend, "parity": result.metrics.get("parity"), "reason": result.metrics.get("reason"), "rank": result.metrics.get("rank"), "runtime_revision": result.runtime_revision, "device": result.device, "gpu_execution": result.metrics.get("gpu_execution", False)}
+
+    def run_lora_train_step(self, x: list[float], dy: list[float], a: list[float], b: list[float], *, rank: int = 4, learning_rate: float = 0.01) -> dict:
+        result = self.backend.execute_tiny_lora(x, a, b, dy, rank, learning_rate)
+        return {"operation": result.operation, "status": result.status, "backend": result.backend, "parity": result.metrics.get("parity"), "gpu_execution": result.metrics.get("gpu_execution", False), "forward": result.metrics.get("forward"), "dA_update": result.metrics.get("dA_update"), "dB_update": result.metrics.get("dB_update"), "runtime_revision": result.runtime_revision, "device": result.device}
 
     def run_gpu_chain_plan(self, tokens: list[int]) -> dict:
         result = self.backend.execute_tiny_attention_kernel_chain(tokens, self.model)
