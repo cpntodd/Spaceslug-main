@@ -24,6 +24,12 @@ class TuiTest(unittest.TestCase):
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 
+    def test_tui_gpu_forward_plan_is_not_run(self):
+        tui = SpaceslugTui()
+        report = tui.run_gpu_forward_plan([1, 2, 3])
+        self.assertEqual(report["parity"]["status"], "not-run")
+        self.assertIn("GPU forward: not-run", tui.state.status)
+
     def test_tui_reports_structured_gpu_forward_parity(self):
         from spaceslug.backend import ExecutionResult
         tui = SpaceslugTui()
