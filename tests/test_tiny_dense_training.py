@@ -9,6 +9,15 @@ from spaceslug.tokenizer import default_tokenizer
 
 
 class DenseTinyTrainingTest(unittest.TestCase):
+    def test_memory_budget_fails_before_training(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = verify_bundle(create_bundle(root / "fixture.dts", "budget-fixture", {
+                "train": [{"record_id": "a", "text": "ab"}], "validation": [], "test": [],
+            }, tokenizer_id="spaceslug-byte", tokenizer_revision="v1").root)
+            with self.assertRaisesRegex(ValueError, "exceeds budget"):
+                train_dense_tiny(bundle, DenseTinyTrainingConfig(steps=1, learning_rate=0.1, hidden_size=4, memory_budget_bytes=1), tokenizer=default_tokenizer())
+
     def test_dataset_training_checkpoint_and_experiment_record(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

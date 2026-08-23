@@ -62,10 +62,18 @@ class TinyDenseCausalModel:
         }
         return total * scale, gradients
 
-    def train_step(self, sequences: list[list[int]], learning_rate: float) -> float:
+    def train_step(self, sequences: list[list[int]], learning_rate: float, *, gradient_clip: float | None = None) -> float:
         if learning_rate <= 0.0:
             raise ValueError("learning_rate must be positive")
+        if gradient_clip is not None and gradient_clip <= 0.0:
+            raise ValueError("gradient_clip must be positive")
         loss, gradients = self.loss_and_gradients(sequences)
+        if gradient_clip is not None:
+            squared_norm = sum(value * value for rows in (gradients["embedding"], gradients["output"]) for row in rows for value in row) + sum(value * value for value in gradients["output_bias"])
+            norm = math.sqrt(squared_norm)
+            if norm > gradient_clip:
+                scale = gradient_clip / norm
+                gradients = {name: ([value * scale for value in values] if name == "output_bias" else [[value * scale for value in row] for row in values]) for name, values in gradients.items()}
         for parameter, gradient in ((self.embedding, gradients["embedding"]), (self.output, gradients["output"])):
             for row, gradient_row in zip(parameter, gradient):
                 for index, value in enumerate(gradient_row):

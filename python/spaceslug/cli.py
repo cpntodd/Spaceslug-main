@@ -9,7 +9,8 @@ from .dataset import verify_bundle
 from .tiny_model import TinyBigramModel
 from .tiny_artifact import write_tiny_artifact
 from .tiny_training import TinyTrainingConfig, save_training_checkpoint, train_tiny
-from .tiny_dense_training import DenseTinyTrainingConfig, save_dense_checkpoint, train_dense_tiny, write_experiment_record
+from .tiny_dense_training import DenseTinyTrainingConfig, load_dense_checkpoint, save_dense_checkpoint, train_dense_tiny, write_experiment_record
+from .tiny_dense_artifact import write_dense_tiny_artifact
 from .tokenizer import default_tokenizer
 
 
@@ -30,10 +31,14 @@ def main() -> int:
     dense_train = subparsers.add_parser("tiny-dense-train")
     dense_train.add_argument("bundle", type=Path)
     dense_train.add_argument("checkpoint", type=Path)
+    dense_train.add_argument("artifact", type=Path)
     dense_train.add_argument("experiment", type=Path)
+    dense_train.add_argument("--resume", type=Path)
     dense_train.add_argument("--steps", type=int, default=30)
     dense_train.add_argument("--learning-rate", type=float, default=0.5)
     dense_train.add_argument("--hidden-size", type=int, default=16)
+    dense_train.add_argument("--gradient-clip", type=float)
+    dense_train.add_argument("--memory-budget-bytes", type=int)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
@@ -42,13 +47,21 @@ def main() -> int:
         return 0
     if args.command == "tiny-dense-train":
         bundle = verify_bundle(args.bundle)
+        tokenizer = default_tokenizer()
+        model = None
+        prior_steps = 0
+        if args.resume:
+            model, previous_metrics = load_dense_checkpoint(args.resume)
+            prior_steps = int(previous_metrics["optimizer_step"])
         model, metrics = train_dense_tiny(
-            bundle, DenseTinyTrainingConfig(args.steps, args.learning_rate, args.hidden_size), tokenizer=default_tokenizer()
+            bundle, DenseTinyTrainingConfig(args.steps, args.learning_rate, args.hidden_size, args.gradient_clip, args.memory_budget_bytes), tokenizer=tokenizer,
+            model=model, prior_steps=prior_steps
         )
         save_dense_checkpoint(args.checkpoint, model, metrics)
+        artifact = write_dense_tiny_artifact(args.artifact, model, tokenizer)
         record = write_experiment_record(args.experiment, args.experiment.name, metrics)
         print(f"initial_loss={metrics['initial_train_loss']:.9f} final_loss={metrics['final_train_loss']:.9f}")
-        print(f"checkpoint={args.checkpoint} experiment={record}")
+        print(f"checkpoint={args.checkpoint} artifact={args.artifact} revision={artifact['revision']} experiment={record}")
         return 0
     if args.command == "tiny-train-dataset":
         bundle = verify_bundle(args.bundle)

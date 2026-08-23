@@ -17,23 +17,37 @@ class DenseTinyTrainingConfig:
     steps: int
     learning_rate: float
     hidden_size: int = 16
+    gradient_clip: float | None = None
+    memory_budget_bytes: int | None = None
     seed: int = 0
 
     def validate(self) -> None:
         if self.steps <= 0 or self.learning_rate <= 0.0 or self.hidden_size <= 0:
             raise ValueError("steps, learning_rate, and hidden_size must be positive")
+        if self.gradient_clip is not None and self.gradient_clip <= 0.0:
+            raise ValueError("gradient_clip must be positive")
+        if self.memory_budget_bytes is not None and self.memory_budget_bytes <= 0:
+            raise ValueError("memory_budget_bytes must be positive")
+
+    def estimated_memory_bytes(self, vocab_size: int) -> int:
+        # Parameters plus analytic gradients: embedding + output + bias, float64 each.
+        values = vocab_size * self.hidden_size * 2 + vocab_size
+        return values * 8 * 2
 
 
 def train_dense_tiny(bundle: DatasetBundle, config: DenseTinyTrainingConfig, *, tokenizer: ByteTokenizer,
                      model: TinyDenseCausalModel | None = None, prior_steps: int = 0) -> tuple[TinyDenseCausalModel, dict]:
     config.validate()
     sequences = sequences_from_records(bundle.records("train"), tokenizer)
+    estimated_memory = config.estimated_memory_bytes(tokenizer.vocab_size)
+    if config.memory_budget_bytes is not None and estimated_memory > config.memory_budget_bytes:
+        raise ValueError(f"training plan requires {estimated_memory} bytes, exceeds budget {config.memory_budget_bytes}")
     model = model or TinyDenseCausalModel.create(tokenizer.vocab_size, config.hidden_size)
     if model.vocab_size != tokenizer.vocab_size:
         raise ValueError("model and tokenizer vocabularies differ")
     before, _ = model.loss_and_gradients(sequences)
     for _ in range(config.steps):
-        model.train_step(sequences, config.learning_rate)
+        model.train_step(sequences, config.learning_rate, gradient_clip=config.gradient_clip)
     after, _ = model.loss_and_gradients(sequences)
     validation = bundle.records("validation")
     validation_loss = None
