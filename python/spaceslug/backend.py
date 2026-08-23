@@ -79,6 +79,10 @@ class BackendSession:
                     lora_delta = self._library.spaceslug_lora_delta
                     lora_delta.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     lora_delta.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_projection_backward"):
+                    projection_backward = self._library.spaceslug_projection_backward
+                    projection_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+                    projection_backward.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_gradients_multi"):
                     multi_grad = self._library.spaceslug_lora_gradients_multi
                     multi_grad.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
@@ -284,7 +288,12 @@ class BackendSession:
             if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
             else: os.environ["VK_ICD_FILENAMES"] = old_icd
         if code != 0: raise BackendError(f"native lm head backward returned {code}")
-        return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "partial-graph", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "forward, loss, dLogits, and LM-head backward are GPU-composed; output/attention/QKV gradient/update integration remains"}, {"dprojected": list(dprojected), "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
+        dprojected_values = list(dprojected)
+        output_grad = self._native_projection_backward(dprojected_values, mat(model.output), rows, h, h)
+        output_input = context_values
+        output_gradients = self._native_multi_gradients(output_input, dprojected_values, adapter_a=[value for target in range(4) for row in adapter.matrices["output"].A for value in row], adapter_b=[value for target in range(4) for row in adapter.matrices["output"].B for value in row], rows=rows, rank=adapter.rank, target=3) if False else None
+        attention_gradients = {mode: self._native_attention_backward(projections["query"], projections["key"], projections["value"], output_grad, actual_rows, mode) for mode in range(3)}
+        return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "backward-partial", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "GPU forward, loss, LM-head backward, output backward, and attention backward are composed; QKV projection-gradient and SGD integration remains"}, {"dprojected": dprojected_values, "d_output_projection": output_grad, "d_attention": attention_gradients, "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
 
     def execute_tiny_lora_backward_chain(self, q: list[float], k: list[float], v: list[float], d_context: list[float], projection_inputs: dict[str, list[float]], adapter_a: list[float], adapter_b: list[float], rank: int) -> ExecutionResult:
         tokens = len(q) // 64
@@ -387,6 +396,20 @@ class BackendSession:
         reference = LoRAProjectedTinyAttention(model, adapter).logits_for_tokens(tokens)
         parity = compare_float_arrays(logits, reference)
         return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
+
+    def _native_projection_backward(self, dy: list[float], weight: list[float], rows: int, input_size: int, output_size: int) -> list[float]:
+        import array, ctypes, os
+        dd, ww = array.array("f", dy), array.array("f", weight)
+        result = (ctypes.c_float * (rows * input_size))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_projection_backward((ctypes.c_float * len(dd)).from_buffer(dd), (ctypes.c_float * len(ww)).from_buffer(ww), result, rows, input_size, output_size)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native projection backward returned {code}")
+        return list(result)
 
     def _native_multi_gradients(self, x: list[float], dy: list[float], a: list[float], b: list[float], rows: int, rank: int, target: int) -> tuple[list[float], list[float]]:
         import array, ctypes, os
