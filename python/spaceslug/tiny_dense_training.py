@@ -25,7 +25,7 @@ class DenseTinyTrainingConfig:
 
 
 def train_dense_tiny(bundle: DatasetBundle, config: DenseTinyTrainingConfig, *, tokenizer: ByteTokenizer,
-                     model: TinyDenseCausalModel | None = None) -> tuple[TinyDenseCausalModel, dict]:
+                     model: TinyDenseCausalModel | None = None, prior_steps: int = 0) -> tuple[TinyDenseCausalModel, dict]:
     config.validate()
     sequences = sequences_from_records(bundle.records("train"), tokenizer)
     model = model or TinyDenseCausalModel.create(tokenizer.vocab_size, config.hidden_size)
@@ -40,7 +40,7 @@ def train_dense_tiny(bundle: DatasetBundle, config: DenseTinyTrainingConfig, *, 
     if validation:
         validation_loss, _ = model.loss_and_gradients(sequences_from_records(validation, tokenizer))
     return model, {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss,
-                   "optimizer_step": config.steps, "dataset_revision": bundle.manifest["revision"],
+                   "optimizer_step": prior_steps + config.steps, "dataset_revision": bundle.manifest["revision"],
                    "tokenizer_fingerprint": tokenizer.fingerprint(), "config": asdict(config)}
 
 
