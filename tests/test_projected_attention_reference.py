@@ -11,6 +11,12 @@ class ProjectedAttentionReferenceTest(unittest.TestCase):
         self.batch = target_only_batches([{"prompt": "Q: ", "target": "a"}, {"prompt": "Q: ", "target": "b"}], tokenizer, 2)[0]
         self.model = ProjectedTinyAttentionModel(tokenizer.vocab_size, 2)
 
+    def test_positions_are_deterministic_and_change_nonzero_positions(self):
+        from spaceslug.positional_encoding import sinusoidal_positions
+        first = sinusoidal_positions(3, 4)
+        self.assertEqual(first, sinusoidal_positions(3, 4))
+        self.assertNotEqual(first[0], first[1])
+
     def test_each_projection_analytic_gradient_matches_finite_difference(self):
         epsilon = 1e-5
         _, gradients = self.model.loss_and_gradients(self.batch)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from .batching import CausalBatch
+from .positional_encoding import sinusoidal_positions
 
 
 def _matvec(vector: list[float], matrix: list[list[float]]) -> list[float]:
@@ -18,10 +19,10 @@ class ProjectedTinyAttentionModel:
     acceptance target explicit before a complete analytic backward implementation.
     """
 
-    def __init__(self, vocab_size: int, hidden_size: int = 2) -> None:
+    def __init__(self, vocab_size: int, hidden_size: int = 2, use_positions: bool = True) -> None:
         if vocab_size <= 0 or hidden_size <= 0:
             raise ValueError("vocab_size and hidden_size must be positive")
-        self.vocab_size, self.hidden_size = vocab_size, hidden_size
+        self.vocab_size, self.hidden_size, self.use_positions = vocab_size, hidden_size, use_positions
         self.embedding = [[((token + 1) * (channel + 3) % 17 - 8) / 10.0 for channel in range(hidden_size)] for token in range(vocab_size)]
         def matrix(offset: int) -> list[list[float]]:
             return [[((row + offset) * (column + 5) % 11 - 5) / 10.0 for column in range(hidden_size)] for row in range(hidden_size)]
@@ -32,7 +33,10 @@ class ProjectedTinyAttentionModel:
         total, count, scale = 0.0, 0, 1.0 / math.sqrt(self.hidden_size)
         gradients = {name: [[0.0] * self.hidden_size for _ in range(self.hidden_size)] for name in ("query", "key", "value", "output")}
         for inputs, targets, mask in zip(batch.input_tokens, batch.target_tokens, batch.loss_mask):
-            states = [self.embedding[token] for token in inputs]
+            states = [self.embedding[token][:] for token in inputs]
+            if self.use_positions:
+                positions = sinusoidal_positions(len(states), self.hidden_size)
+                states = [[value + positions[index][channel] for channel, value in enumerate(state)] for index, state in enumerate(states)]
             keys, values = [_matvec(state, self.key) for state in states], [_matvec(state, self.value) for state in states]
             for position, (target, include) in enumerate(zip(targets, mask)):
                 if not include:
