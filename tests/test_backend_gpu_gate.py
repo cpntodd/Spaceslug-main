@@ -13,6 +13,12 @@ class BackendGpuGateTest(unittest.TestCase):
         self.assertTrue(result["cpu_gate_required"])
         self.assertEqual(result["next_operation"], "tiny_projected_attention_forward")
         self.assertTrue(result["gemm_parity_available"])
+        from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
+        cpu_forward = session.execute_projected_attention_cpu_fallback([1, 2, 3], ProjectedTinyAttentionModel(259))
+        self.assertEqual(cpu_forward.status, "ok")
+        self.assertTrue(cpu_forward.fallback_used)
+        self.assertFalse(cpu_forward.metrics["gpu_execution"])
+        self.assertEqual(len(cpu_forward.output["logits"]), 259)
         plan = session.projected_attention_forward_plan(hidden_size=2, sequence_length=4, vocab_size=259)
         self.assertEqual(plan["status"], "planned-not-implemented")
         self.assertFalse(plan["gpu_execution"])

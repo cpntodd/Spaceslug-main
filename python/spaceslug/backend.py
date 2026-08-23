@@ -137,6 +137,10 @@ class BackendSession:
             result.metrics["parity"] = "cpu-projection-output"
         return result
 
+    def execute_projected_attention_cpu_fallback(self, tokens: list[int], model: Any) -> ExecutionResult:
+        logits = model.logits_for_tokens(tokens)
+        return ExecutionResult("ok", "tiny_projected_attention_forward", "cpu-reference", self.runtime_revision, None, True, {"parity": "cpu-reference", "gpu_execution": False}, {"logits": logits, "token_count": len(tokens)})
+
     def projected_attention_forward_plan(self, *, hidden_size: int, sequence_length: int, vocab_size: int) -> dict[str, Any]:
         if hidden_size <= 0 or sequence_length <= 0 or vocab_size <= 0:
             raise ValueError("projected attention dimensions must be positive")
