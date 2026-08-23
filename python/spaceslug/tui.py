@@ -15,6 +15,7 @@ import tempfile
 from .cpu_verification import verify_cpu_training
 from .dataset import verify_bundle
 from .filesystem_picker import FileSelection, pick_files
+from .gpu_gate import run_tiny_gemm_gate
 from .model_profiles import resolve_profile
 from .projected_attention_training import ProjectedAttentionConfig, train_projected_attention
 from .tokenizer import default_tokenizer
@@ -84,6 +85,15 @@ class SpaceslugTui:
         self.state.cpu_verified = result.passed
         self.state.backend = result.backend
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
+        return result.__dict__
+
+    def verify_gpu_gemm(self, runtime_root: str | Path, runtime_revision: str, *, software_vulkan: bool = False) -> dict:
+        if not self.state.cpu_verified:
+            raise ValueError("CPU verification is required before Vulkan GEMM")
+        cpu = type("CpuResult", (), {"passed": True})()
+        result = run_tiny_gemm_gate(cpu, runtime_root, runtime_revision, software_vulkan=software_vulkan)
+        self.state.backend = "vulkan-lavapipe" if software_vulkan else "vulkan-radv"
+        self.state.status = "Vulkan GEMM parity passed" if result.gpu_passed else "Vulkan GEMM parity failed"
         return result.__dict__
 
     def train_cpu(self, bundle_path: str | Path | None = None) -> dict:

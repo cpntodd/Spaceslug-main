@@ -24,6 +24,15 @@ class TuiTest(unittest.TestCase):
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 
+    def test_gpu_gemm_requires_cpu_gate_and_reports_parity(self):
+        tui = SpaceslugTui()
+        with self.assertRaises(ValueError):
+            tui.verify_gpu_gemm("/missing/runtime", "runtime")
+        tui.state.cpu_verified = True
+        result = tui.verify_gpu_gemm("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "a195bc6d50bb16528fe8970d74254a855264a35c")
+        self.assertTrue(result["gpu_passed"])
+        self.assertEqual(result["parity"], "cpu-reference")
+
     def test_cpu_verify_and_training_stream_loss(self):
         with tempfile.TemporaryDirectory() as directory:
             bundle = create_tiny_acceptance_bundle(Path(directory) / "dataset.dts")
