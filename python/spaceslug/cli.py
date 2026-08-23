@@ -15,6 +15,7 @@ from .projected_attention_training import ProjectedAttentionConfig, run_projecte
 from .regression import compare_reports
 from .regression_series import load_regression_series, write_regression_series
 from .tui import SpaceslugTui
+from .cpu_verification import verify_cpu_training
 from .tokenizer import default_tokenizer
 
 
@@ -22,6 +23,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="spaceslug")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("tui")
+    cpu_gate = subparsers.add_parser("tiny-cpu-verify")
+    cpu_gate.add_argument("bundle", type=Path)
+    cpu_gate.add_argument("--steps", type=int, default=2)
+    cpu_gate.add_argument("--learning-rate", type=float, default=0.1)
     verify = subparsers.add_parser("dataset-verify")
     verify.add_argument("bundle", type=Path)
     train = subparsers.add_parser("tiny-train")
@@ -65,6 +70,11 @@ def main() -> int:
     series.add_argument("--max-loss-increase", type=float, default=0.0)
     series.add_argument("--max-accuracy-drop", type=float, default=0.0)
     args = parser.parse_args()
+    if args.command == "tiny-cpu-verify":
+        import json
+        result = verify_cpu_training(args.bundle, steps=args.steps, learning_rate=args.learning_rate)
+        print(json.dumps(result.__dict__, sort_keys=True))
+        return 0 if result.passed else 1
     if args.command == "tui":
         SpaceslugTui().run()
         return 0
