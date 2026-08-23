@@ -87,6 +87,13 @@ class SpaceslugTui:
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
         return result.__dict__
 
+    def plan_gpu_forward(self, runtime_root: str | Path, runtime_revision: str) -> dict:
+        from .backend import BackendSession
+        config = self.state.model_config
+        plan = BackendSession(runtime_root, runtime_revision).projected_attention_forward_plan(hidden_size=2, sequence_length=min(self.state.model_config["context_length"], 512), vocab_size=259)
+        self.state.status = "Tiny Vulkan forward plan ready"
+        return plan
+
     def verify_gpu_gemm(self, runtime_root: str | Path, runtime_revision: str, *, software_vulkan: bool = False) -> dict:
         if not self.state.cpu_verified:
             raise ValueError("CPU verification is required before Vulkan GEMM")

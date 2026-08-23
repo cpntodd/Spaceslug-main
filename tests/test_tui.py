@@ -24,6 +24,13 @@ class TuiTest(unittest.TestCase):
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 
+    def test_gpu_forward_plan_exposes_resolved_contract(self):
+        tui = SpaceslugTui()
+        plan = tui.plan_gpu_forward("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
+        self.assertEqual(plan["operation"], "tiny_projected_attention_forward")
+        self.assertEqual(plan["status"], "planned-not-implemented")
+        self.assertEqual(plan["parity_gate"], "CPU logits vs RADV logits")
+
     def test_gpu_gemm_requires_cpu_gate_and_reports_parity(self):
         tui = SpaceslugTui()
         with self.assertRaises(ValueError):
