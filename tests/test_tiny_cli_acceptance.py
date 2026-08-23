@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 
 from spaceslug.projected_attention_artifact import load_projected_artifact
+from spaceslug.regression import compare_reports
 from spaceslug.projected_attention_inference import next_token
 from spaceslug.projected_attention_training import ProjectedAttentionConfig, run_projected_training
 from spaceslug.tokenizer import default_tokenizer
@@ -29,6 +30,9 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             self.assertEqual(report["metrics"]["acceptance"]["reproducibility"], "pass")
             self.assertEqual(report["metrics"]["acceptance"]["quality"], "not-established")
             self.assertTrue(report["metrics"]["acceptance"]["ready_for_bounded_testing"])
+            comparison = compare_reports([report, report])
+            self.assertTrue(comparison["pass"])
+            self.assertEqual(comparison["runs"], 2)
 
 
 if __name__ == "__main__":
