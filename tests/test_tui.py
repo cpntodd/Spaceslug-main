@@ -21,6 +21,7 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(len(tui.worm_graph()), 8)
         rendered = tui.render()
         self.assertIn("worm graph", rendered)
+        self.assertIn("CPU inference", rendered)
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 

@@ -183,7 +183,7 @@ class SpaceslugTui:
         state = self.state
         lines = ["Spaceslug-main :: Tiny workstation", "=" * min(width, 80),
                  f"[{state.screen}] backend={state.backend} status={state.status}",
-                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [g] Vulkan GEMM  [q] quit", ""]
+                 "[d] dataset  [m] model  [t] training  [v] verify CPU  [r] run CPU  [i] CPU inference  [g] Vulkan GEMM  [h] GPU chain  [q] quit", ""]
         if state.screen == "dashboard":
             capabilities = self.runtime_capabilities()
             lines += [f"model: {state.model_id}", f"steps/epochs: {state.steps}/{state.epochs}", f"CPU verified: {state.cpu_verified}", f"runtime: {capabilities['device']} ops={','.join(capabilities['operations'])}", "GPU gate: CPU verification required before Vulkan"]
@@ -227,6 +227,12 @@ class SpaceslugTui:
             elif key == ord("g"):
                 self.state.screen = "training"
                 self.state.status = "use controller API to run Vulkan GEMM parity"
+            elif key == ord("i"):
+                self.state.screen = "dashboard"
+                self.state.status = "use controller API to run CPU inference"
+            elif key == ord("h"):
+                self.state.screen = "training"
+                self.state.status = "use controller API to inspect GPU chain"
             elif key == curses.KEY_MOUSE:
                 _, x, y, _, _ = curses.getmouse()
                 if y == 3:
