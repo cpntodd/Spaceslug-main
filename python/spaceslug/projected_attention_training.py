@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+import time
 
 from .batching import target_only_batches
 from .dataset import DatasetBundle
@@ -23,12 +24,18 @@ class ProjectedAttentionConfig:
     batch_size: int = 1
     optimizer: str = "adamw"
     weight_decay: float = 0.0
+    max_seconds: float | None = None
+    early_stop_patience: int | None = None
 
     def validate(self) -> None:
         if self.steps <= 0 or self.learning_rate <= 0.0 or self.batch_size <= 0:
             raise ValueError("steps, learning_rate, and batch_size must be positive")
         if self.optimizer != "adamw" or self.weight_decay < 0.0:
             raise ValueError("only adamw is supported and weight_decay must not be negative")
+        if self.max_seconds is not None and self.max_seconds <= 0.0:
+            raise ValueError("max_seconds must be positive")
+        if self.early_stop_patience is not None and self.early_stop_patience <= 0:
+            raise ValueError("early_stop_patience must be positive")
 
 
 def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionConfig, *, tokenizer: ByteTokenizer,
@@ -39,9 +46,26 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
     model = model or ProjectedTinyAttentionModel(tokenizer.vocab_size)
     before = sum(model.loss(batch) for batch in batches) / len(batches)
     state = optimizer_state if optimizer_state is not None else {}
+    started = time.monotonic()
+    best_loss = before
+    stale_steps = 0
+    completed_steps = 0
+    stopped_reason = "steps"
     for _ in range(config.steps):
         for batch in batches:
             model.train_step(batch, config.learning_rate, optimizer_state=state, weight_decay=config.weight_decay)
+        completed_steps += 1
+        current_loss = sum(model.loss(batch) for batch in batches) / len(batches)
+        if current_loss < best_loss:
+            best_loss, stale_steps = current_loss, 0
+        else:
+            stale_steps += 1
+        if config.early_stop_patience is not None and stale_steps >= config.early_stop_patience:
+            stopped_reason = "early_stop"
+            break
+        if config.max_seconds is not None and time.monotonic() - started >= config.max_seconds:
+            stopped_reason = "time_budget"
+            break
     after = sum(model.loss(batch) for batch in batches) / len(batches)
     validation_records = bundle.records("validation")
     validation_loss = None
@@ -55,7 +79,7 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
         test_batches = target_only_batches(test_records, tokenizer, config.batch_size)
         test_loss = sum(model.loss(batch) for batch in test_batches) / len(test_batches)
         test_accuracy = token_accuracy(model, test_batches)
-    metrics = {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "test_loss": test_loss, "test_token_accuracy": test_accuracy, "optimizer_step": state.get("step", prior_steps + config.steps),
+    metrics = {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "test_loss": test_loss, "test_token_accuracy": test_accuracy, "optimizer_step": state.get("step", prior_steps + completed_steps), "completed_steps": completed_steps, "stopped_reason": stopped_reason,
                "dataset_revision": bundle.manifest["revision"], "tokenizer_fingerprint": tokenizer.fingerprint(), "config": asdict(config)}
     return model, state, metrics
 
