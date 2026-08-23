@@ -51,6 +51,23 @@ class TinyLoRAAdapter:
         adapter.validate()
         return adapter
 
+def lora_gradients_from_weight_gradient(gradient, matrix: LoRAMatrix):
+    """Chain a dW gradient through W + (alpha/rank) A@B."""
+    matrix.validate(matrix.input_size)
+    scale = matrix.alpha / matrix.rank
+    d_a = [[scale * sum(gradient[i][j] * matrix.B[r][j] for j in range(matrix.output_size)) for r in range(matrix.rank)] for i in range(matrix.input_size)]
+    d_b = [[scale * sum(matrix.A[i][r] * gradient[i][j] for i in range(matrix.input_size)) for j in range(matrix.output_size)] for r in range(matrix.rank)]
+    return d_a, d_b
+
+
+def sgd_update(matrix: LoRAMatrix, d_a, d_b, learning_rate: float):
+    if learning_rate <= 0.0: raise ValueError("learning rate must be positive")
+    for i in range(matrix.input_size):
+        for r in range(matrix.rank): matrix.A[i][r] -= learning_rate * d_a[i][r]
+    for r in range(matrix.rank):
+        for j in range(matrix.output_size): matrix.B[r][j] -= learning_rate * d_b[r][j]
+
+
 class LoRAProjectedTinyAttention:
     def __init__(self, base: ProjectedTinyAttentionModel, adapter: TinyLoRAAdapter):
         adapter.validate(base); self.base, self.adapter = base, adapter
