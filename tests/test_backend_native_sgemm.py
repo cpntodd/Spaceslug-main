@@ -4,13 +4,26 @@ from spaceslug.backend import BackendSession
 
 
 class NativeSgemmTest(unittest.TestCase):
+    def setUp(self):
+        self.session = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "a195bc6d50bb16528fe8970d74254a855264a35c")
+
     def test_native_sgemm_returns_gpu_result(self):
-        session = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "a195bc6d50bb16528fe8970d74254a855264a35c")
-        result = session.execute_sgemm_native([1.0] * (64 * 32), [2.0] * (32 * 64), 64, 64, 32)
+        result = self.session.execute_sgemm_native([1.0] * (64 * 32), [2.0] * (32 * 64), 64, 64, 32)
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.operation, "sgemm")
         self.assertEqual(result.output["first"], 64.0)
         self.assertEqual(result.metrics["parity"], "cpu-reference")
+
+    def test_projected_qkv_uses_native_sgemm_for_padded_shape(self):
+        result = self.session.execute_projected_qkv([1.0] * (64 * 64), [2.0] * (64 * 64), 64, 64)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.operation, "qkv_projection_sgemm")
+        self.assertEqual(result.metrics["parity"], "CPU projection contract")
+
+    def test_projected_qkv_reports_unpadded_shape_without_false_gpu_claim(self):
+        result = self.session.execute_projected_qkv([1.0] * (4 * 2), [2.0] * 4, 4, 2)
+        self.assertEqual(result.status, "not-run")
+        self.assertEqual(result.metrics["parity"], "not-run")
 
 
 if __name__ == "__main__":

@@ -116,6 +116,16 @@ class BackendSession:
             raise BackendError(f"native sgemm returned {code}")
         return ExecutionResult("ok", "sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "max_relative_error": float(error_value.value)}, {"m": m, "n": n, "k": k, "first": float(cc[0])})
 
+    def execute_projected_qkv(self, states: list[float], projection: list[float], sequence_length: int, hidden_size: int) -> ExecutionResult:
+        if len(states) != sequence_length * hidden_size or len(projection) != hidden_size * hidden_size:
+            raise BackendError("projected QKV dimensions are invalid")
+        result = self.execute_sgemm_native(states, projection, sequence_length // 64 * 64, hidden_size, hidden_size) if sequence_length >= 64 and hidden_size >= 64 and hidden_size % 64 == 0 else None
+        if result is None:
+            return ExecutionResult("not-run", "qkv_projection_sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"reason": "runtime SGEMM requires padded production dimensions", "parity": "not-run"}, {"sequence_length": sequence_length, "hidden_size": hidden_size})
+        result = ExecutionResult(result.status, "qkv_projection_sgemm", result.backend, result.runtime_revision, result.device, result.fallback_used, dict(result.metrics), dict(result.output))
+        result.metrics["parity"] = "CPU projection contract"
+        return result
+
     def projected_attention_forward_plan(self, *, hidden_size: int, sequence_length: int, vocab_size: int) -> dict[str, Any]:
         if hidden_size <= 0 or sequence_length <= 0 or vocab_size <= 0:
             raise ValueError("projected attention dimensions must be positive")
