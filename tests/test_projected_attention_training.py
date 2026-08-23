@@ -52,6 +52,14 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             self.assertTrue(experiment["metrics"]["artifact_revision"].startswith("sha256:"))
             self.assertEqual(experiment["metrics"]["checkpoint_identity"]["schema_version"], 2)
 
+    def test_step_callback_receives_loss_series(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = verify_bundle(create_bundle(Path(directory) / "fixture.dts", "callback", {"train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}], "validation": [], "test": []}).root)
+            observed = []
+            train_projected_attention(bundle, ProjectedAttentionConfig(steps=3, learning_rate=0.1), tokenizer=default_tokenizer(), on_step=lambda step, loss: observed.append((step, loss)))
+            self.assertEqual([step for step, _ in observed], [1, 2, 3])
+            self.assertTrue(all(loss > 0.0 for _, loss in observed))
+
     def test_time_budget_and_early_stop_are_reported(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
