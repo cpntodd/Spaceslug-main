@@ -10,6 +10,8 @@ import subprocess
 import time
 from typing import Any
 
+from .parity import compare_float_arrays
+
 
 @dataclass(frozen=True)
 class BackendCapabilities:
@@ -114,12 +116,9 @@ class BackendSession:
         code = self._library.spaceslug_sgemm((ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), (ctypes.c_float * len(cc)).from_buffer(cc), m, n, k, ctypes.byref(error_value))
         if code != 0:
             raise BackendError(f"native sgemm returned {code}")
-        max_relative_error = 0.0
-        for row in range(m):
-            for column in range(n):
-                expected = sum(a[row * k + inner] * b[inner * n + column] for inner in range(k))
-                max_relative_error = max(max_relative_error, abs(float(cc[row * n + column]) - expected) / max(1.0, abs(expected)))
-        return ExecutionResult("ok", "sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "max_relative_error": max_relative_error}, {"m": m, "n": n, "k": k, "first": float(cc[0]), "values": cc.tolist()})
+        expected_values = [sum(a[row * k + inner] * b[inner * n + column] for inner in range(k)) for row in range(m) for column in range(n)]
+        parity = compare_float_arrays(cc.tolist(), expected_values)
+        return ExecutionResult("ok", "sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", **parity}, {"m": m, "n": n, "k": k, "first": float(cc[0]), "values": cc.tolist()})
 
     def execute_projected_qkv(self, states: list[float], projection: list[float], sequence_length: int, hidden_size: int, *, cpu_reference: list[float] | None = None) -> ExecutionResult:
         if len(states) != sequence_length * hidden_size or len(projection) != hidden_size * hidden_size:
@@ -134,7 +133,7 @@ class BackendSession:
         if cpu_reference is not None:
             if len(cpu_reference) != len(result.output["values"]):
                 raise BackendError("CPU projection reference length does not match GPU output")
-            result.metrics["max_cpu_projection_error"] = max(abs(actual - expected) / max(1.0, abs(expected)) for actual, expected in zip(result.output["values"], cpu_reference))
+            result.metrics["cpu_projection_parity"] = compare_float_arrays(result.output["values"], cpu_reference)
             result.metrics["parity"] = "cpu-projection-output"
         return result
 
