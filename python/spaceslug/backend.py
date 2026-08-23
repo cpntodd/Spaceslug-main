@@ -91,8 +91,11 @@ class BackendSession:
                 else: os.environ["VK_ICD_FILENAMES"] = old_icd
             if code != 0:
                 raise BackendError(f"native vector_add returned {code}")
-            values = [float(output[0]), float(output[-1])]
-            return ExecutionResult("ok", "vector_add", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"operation_count": 1, "host_elapsed_seconds": time.perf_counter() - started, "software_vulkan": self.software_vulkan, "execution": environment_note}, {"first": values[0], "last": values[1], "count": len(left)})
+            expected = [left_value + right_value for left_value, right_value in zip(left, right)]
+            max_abs_error = max(abs(float(actual) - expected_value) for actual, expected_value in zip(output, expected))
+            if max_abs_error != 0.0:
+                raise BackendError(f"native vector_add parity failure: max_abs_error={max_abs_error}")
+            return ExecutionResult("ok", "vector_add", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"operation_count": 1, "host_elapsed_seconds": time.perf_counter() - started, "software_vulkan": self.software_vulkan, "execution": environment_note, "parity": "cpu-reference", "max_abs_error": max_abs_error}, {"first": float(output[0]), "last": float(output[-1]), "count": len(left)})
         completed = self._run("vector_add")
         if not completed.stdout.strip().endswith("PASS"):
             raise BackendError(f"vector_add did not pass: {completed.stdout.strip()}")
