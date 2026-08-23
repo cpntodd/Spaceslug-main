@@ -229,6 +229,23 @@ class BackendSession:
             return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_gpu_plan(tokens, model)
 
+    def execute_tiny_lora_backward_chain(self, q: list[float], k: list[float], v: list[float], d_context: list[float], projection_inputs: dict[str, list[float]], adapter_a: list[float], adapter_b: list[float], rank: int) -> ExecutionResult:
+        tokens = len(q) // 64
+        if tokens == 0 or tokens > 128 or any(len(values) != tokens * 64 for values in (k, v, d_context)) or rank < 1 or rank > 8 or len(adapter_a) != 4 * 64 * rank or len(adapter_b) != 4 * rank * 64:
+            return ExecutionResult("not-run", "tiny_lora_backward_chain", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "backward chain requires equal Q/K/V/dContext [T,64] and packed four-target factors"}, {})
+        required = ("query", "key", "value", "output")
+        if any(name not in projection_inputs or len(projection_inputs[name]) != tokens * 64 for name in required):
+            return ExecutionResult("not-run", "tiny_lora_backward_chain", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "backward chain requires projection inputs for query/key/value/output"}, {})
+        if not all(hasattr(self._native(), name) for name in ("spaceslug_attention_causal_backward", "spaceslug_lora_gradients_multi")):
+            return ExecutionResult("not-run", "tiny_lora_backward_chain", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "attention backward or multi-gradient ABI unavailable"}, {})
+        attention_outputs = {}
+        for mode, name in enumerate(("query", "key", "value")):
+            attention_outputs[name] = self._native_attention_backward(q, k, v, d_context, tokens, mode)
+        gradients = {}
+        for target, name in enumerate(required):
+            gradients[name] = self._native_multi_gradients(projection_inputs[name], attention_outputs[name] if name != "output" else d_context, adapter_a, adapter_b, tokens, rank, target)
+        return ExecutionResult("ok", "tiny_lora_backward_chain", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "native-composed", "gpu_execution": True, "targets": list(required)}, {"attention_gradients": attention_outputs, "lora_gradients": gradients})
+
     def execute_lora_gradients_multi(self, x: list[float], dy: list[float], a: list[float], b: list[float], rank: int, target: int) -> ExecutionResult:
         rows = len(x) // 64
         if rows == 0 or rows > 128 or len(x) % 64 or len(dy) != len(x) or len(a) != 4 * 64 * rank or len(b) != 4 * rank * 64 or rank < 1 or rank > 8 or target < 0 or target > 3:
