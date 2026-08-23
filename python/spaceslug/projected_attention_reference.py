@@ -29,6 +29,24 @@ class ProjectedTinyAttentionModel:
         self.query, self.key, self.value, self.output = matrix(2), matrix(3), matrix(5), matrix(7)
         self.lm_head = [[((channel + 11) * (token + 3) % 13 - 6) / 10.0 for token in range(vocab_size)] for channel in range(hidden_size)]
 
+    def logits_for_tokens(self, tokens: list[int]) -> list[float]:
+        if not tokens:
+            raise ValueError("inference requires at least one token")
+        states = [self.embedding[token][:] for token in tokens]
+        if self.use_positions:
+            positions = sinusoidal_positions(len(states), self.hidden_size)
+            states = [[value + positions[index][channel] for channel, value in enumerate(state)] for index, state in enumerate(states)]
+        keys = [_matvec(state, self.key) for state in states]
+        values = [_matvec(state, self.value) for state in states]
+        query = _matvec(states[-1], self.query)
+        scale = 1.0 / math.sqrt(self.hidden_size)
+        scores = [sum(query[channel] * keys[index][channel] for channel in range(self.hidden_size)) * scale for index in range(len(states))]
+        maximum = max(scores)
+        raw = [math.exp(score - maximum) for score in scores]
+        weights = [value / sum(raw) for value in raw]
+        context = [sum(weights[index] * values[index][channel] for index in range(len(states))) for channel in range(self.hidden_size)]
+        return _matvec(_matvec(context, self.output), self.lm_head)
+
     def loss_and_gradients(self, batch: CausalBatch) -> tuple[float, dict[str, list[list[float]]]]:
         total, count, scale = 0.0, 0, 1.0 / math.sqrt(self.hidden_size)
         gradients = {name: [[0.0] * self.hidden_size for _ in range(self.hidden_size)] for name in ("query", "key", "value", "output")}
