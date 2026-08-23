@@ -26,7 +26,7 @@ class ProjectedAttentionConfig:
 
 
 def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionConfig, *, tokenizer: ByteTokenizer,
-                              model: ProjectedTinyAttentionModel | None = None) -> tuple[ProjectedTinyAttentionModel, dict]:
+                              model: ProjectedTinyAttentionModel | None = None, prior_steps: int = 0) -> tuple[ProjectedTinyAttentionModel, dict]:
     config.validate()
     records = bundle.records("train")
     batches = target_only_batches(records, tokenizer, config.batch_size)
@@ -41,7 +41,7 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
     if validation_records:
         validation_batches = target_only_batches(validation_records, tokenizer, config.batch_size)
         validation_loss = sum(model.loss(batch) for batch in validation_batches) / len(validation_batches)
-    return model, {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "optimizer_step": config.steps,
+    return model, {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "optimizer_step": prior_steps + config.steps,
                    "dataset_revision": bundle.manifest["revision"], "tokenizer_fingerprint": tokenizer.fingerprint(),
                    "config": asdict(config)}
 
@@ -65,9 +65,11 @@ def run_projected_training(
     code_revision: str = "unrecorded",
 ) -> dict:
     model = None
+    prior_steps = 0
     if resume is not None:
-        model, _ = load_projected_checkpoint(resume)
-    model, metrics = train_projected_attention(bundle, config, tokenizer=tokenizer, model=model)
+        model, previous_metrics = load_projected_checkpoint(resume)
+        prior_steps = int(previous_metrics["optimizer_step"])
+    model, metrics = train_projected_attention(bundle, config, tokenizer=tokenizer, model=model, prior_steps=prior_steps)
     save_projected_checkpoint(checkpoint, model, metrics)
     manifest = write_projected_artifact(artifact, model, tokenizer)
     experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision)

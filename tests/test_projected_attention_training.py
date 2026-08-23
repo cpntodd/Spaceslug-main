@@ -41,6 +41,23 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             self.assertEqual(result["metrics"]["optimizer_step"], 2)
             self.assertTrue(Path(result["experiment"]).is_file())
 
+    def test_resume_matches_uninterrupted_projected_training(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = verify_bundle(create_bundle(root / "fixture.dts", "resume-attention", {
+                "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}, {"record_id": "b", "prompt": "Q: ", "target": "b"}], "validation": [], "test": [],
+            }).root)
+            tokenizer = default_tokenizer()
+            first, first_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=2, learning_rate=0.1), tokenizer=tokenizer)
+            checkpoint = root / "first.json"
+            save_projected_checkpoint(checkpoint, first, first_metrics)
+            restored, prior = load_projected_checkpoint(checkpoint)
+            resumed, resumed_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=3, learning_rate=0.1), tokenizer=tokenizer, model=restored, prior_steps=prior["optimizer_step"])
+            uninterrupted, uninterrupted_metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=5, learning_rate=0.1), tokenizer=tokenizer)
+            self.assertEqual(resumed.query, uninterrupted.query)
+            self.assertEqual(resumed.output, uninterrupted.output)
+            self.assertEqual(resumed_metrics["optimizer_step"], uninterrupted_metrics["optimizer_step"])
+
 
 if __name__ == "__main__":
     unittest.main()
