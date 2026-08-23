@@ -40,7 +40,16 @@ class TinyLoRAAdapter:
         delta = self.matrices[target].delta()
         return [[base[i][j] + delta[i][j] for j in range(self.hidden_size)] for i in range(self.hidden_size)]
     def state_dict(self):
-        return {"hidden_size": self.hidden_size, "rank": self.rank, "alpha": self.alpha, "matrices": {k: {"A": v.A, "B": v.B} for k,v in self.matrices.items()}}
+        return {"schema_version": 1, "hidden_size": self.hidden_size, "rank": self.rank, "alpha": self.alpha, "matrices": {k: {"A": v.A, "B": v.B} for k,v in self.matrices.items()}}
+
+    @classmethod
+    def from_state_dict(cls, state):
+        adapter = cls(int(state["hidden_size"]), int(state["rank"]), float(state["alpha"]))
+        for name, values in state["matrices"].items():
+            adapter.matrices[name].A = [list(row) for row in values["A"]]
+            adapter.matrices[name].B = [list(row) for row in values["B"]]
+        adapter.validate()
+        return adapter
 
 class LoRAProjectedTinyAttention:
     def __init__(self, base: ProjectedTinyAttentionModel, adapter: TinyLoRAAdapter):
