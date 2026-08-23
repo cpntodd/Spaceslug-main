@@ -17,7 +17,7 @@ A user can open the GUI, train or adapt a small Spaceslug model, chat with it th
 
 **Experimental CPU-first MVP foundation.** The repository now includes a mouse-capable curses TUI, filesystem dataset selection, intended model-size profiles, deterministic Spaceslug-Tiny CPU training/inference, checkpoint/artifact verification, live loss callbacks, and explicit CPU acceptance gates. The custom Vulkan runtime is host-connected for validated RX580/RADV SGEMM and attention-kernel gates, with lavapipe correctness coverage and structured parity reports.
 
-The full Tiny projected-attention GPU forward chain and GPU LoRA training are not yet implemented. No production model-quality, GPU-training, or GUI claim should be inferred from the current foundation.
+Tiny projected-attention GPU inference is implemented for the fixed MVP contract (single-head H=64, V=259, padded T=128) with CPU/RADV logits parity and a lavapipe check. GPU LoRA forward/backward/update training remains explicitly not implemented. No production model-quality, GPU-training, or GUI claim should be inferred from the current foundation.
 
 ### Quick start
 
