@@ -71,6 +71,10 @@ class BackendSession:
                     causal = self._library.spaceslug_attention_causal
                     causal.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     causal.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_causal_loss"):
+                    causal_loss = self._library.spaceslug_causal_loss
+                    causal_loss.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
+                    causal_loss.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_delta"):
                     lora_delta = self._library.spaceslug_lora_delta
                     lora_delta.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
@@ -99,6 +103,8 @@ class BackendSession:
                     operations.append("attention_causal_abi")
                 if hasattr(native, "spaceslug_lora_train_step"):
                     operations.append("lora_train_step_abi")
+                if hasattr(native, "spaceslug_causal_loss"):
+                    operations.append("causal_loss_abi")
             except BackendError:
                 pass
         return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None)
@@ -211,6 +217,26 @@ class BackendSession:
             return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_gpu_plan(tokens, model)
 
+    def execute_causal_loss(self, logits: list[float], targets: list[int], mask: list[int], vocab: int) -> ExecutionResult:
+        if not logits or len(targets) != len(mask) or len(logits) != len(targets) * vocab or vocab <= 0 or vocab > 320:
+            return ExecutionResult("not-run", "causal_loss", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "loss requires logits[M,V], targets[M], mask[M], and V<=320"}, {})
+        if not hasattr(self._native(), "spaceslug_causal_loss"):
+            return ExecutionResult("not-run", "causal_loss", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "causal loss ABI is unavailable"}, {})
+        losses, gradients = self._native_causal_loss(logits, targets, mask, vocab)
+        import math
+        ref_losses, ref_gradients = [], []
+        for row, target in enumerate(targets):
+            values = logits[row * vocab:(row + 1) * vocab]
+            maximum = max(values)
+            normalizer = sum(math.exp(value - maximum) for value in values)
+            included = bool(mask[row]) and target < vocab
+            ref_losses.append(math.log(normalizer) + maximum - values[target] if included else 0.0)
+            ref_gradients.extend((math.exp(value - maximum) / normalizer - (1.0 if col == target else 0.0)) if included else 0.0 for col, value in enumerate(values))
+        loss_parity = compare_float_arrays(losses, ref_losses)
+        gradient_parity = compare_float_arrays(gradients, ref_gradients)
+        passed = loss_parity["status"] == "pass" and gradient_parity["status"] == "pass"
+        return ExecutionResult("ok" if passed else "error", "causal_loss", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "gpu_execution": passed, "loss": loss_parity, "dlogits": gradient_parity}, {"row_loss": losses, "dlogits": gradients})
+
     def execute_tiny_lora_forward(self, tokens: list[int], model: Any, adapter: Any) -> ExecutionResult:
         """Compose frozen base projections with GPU LoRA deltas for Tiny inference."""
         if model.hidden_size != 64 or model.vocab_size != 259 or not 0 < len(tokens) <= 128 or adapter.hidden_size != 64 or adapter.rank != 4:
@@ -257,6 +283,22 @@ class BackendSession:
         reference = LoRAProjectedTinyAttention(model, adapter).logits_for_tokens(tokens)
         parity = compare_float_arrays(logits, reference)
         return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
+
+    def _native_causal_loss(self, logits: list[float], targets: list[int], mask: list[int], vocab: int) -> tuple[list[float], list[float]]:
+        import array, ctypes, os
+        rows = len(targets)
+        ll, tt, mm = array.array("f", logits), array.array("I", targets), array.array("I", mask)
+        gradients = (ctypes.c_float * (rows * vocab))()
+        losses = (ctypes.c_float * rows)()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_causal_loss((ctypes.c_float * len(ll)).from_buffer(ll), (ctypes.c_uint32 * len(tt)).from_buffer(tt), (ctypes.c_uint32 * len(mm)).from_buffer(mm), gradients, losses, rows, vocab)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native causal loss returned {code}")
+        return list(losses), list(gradients)
 
     def _native_lora_delta_values(self, x: list[float], a: list[float], b: list[float], m: int, rank: int) -> list[float]:
         import array, ctypes, os
