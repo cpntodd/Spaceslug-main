@@ -39,6 +39,10 @@ The complete suite passes. `tests/test_tiny_cli_acceptance.py` is the end-to-end
 
 Reports now distinguish `reproducibility: pass` from `quality: not-established`; the synthetic fixture is marked `ready_for_bounded_testing: true` without claiming useful model quality. `regression.compare_reports` provides a bounded multi-run test-loss comparison with an explicit allowed increase.
 
+## CLI regression gate
+
+`spaceslug tiny-regression REPORT...` compares held-out test loss and token accuracy across bounded runs, with explicit `--max-loss-increase` and `--max-accuracy-drop` thresholds. A repeated committed-fixture report passes with zero allowed regression while still reporting zero fixture accuracy honestly.
+
 ## Next gate
 
-Add CLI-level repeated-run comparison output and document the exact command/configuration for a bounded training test series before considering broader Tiny experimentation.
+Add a small persisted regression-series record with run IDs and configurations before considering broader Tiny experimentation.
