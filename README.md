@@ -15,7 +15,22 @@ A user can open the GUI, train or adapt a small Spaceslug model, chat with it th
 
 ## Current status
 
-This repository is initialized with design documentation and reproducibility contracts only. No engine, dataset writer, backend adapter, training loop, or GUI service implementation is claimed yet.
+**Experimental CPU-first MVP foundation.** The repository now includes a mouse-capable curses TUI, filesystem dataset selection, intended model-size profiles, deterministic Spaceslug-Tiny CPU training/inference, checkpoint/artifact verification, live loss callbacks, and explicit CPU acceptance gates. The custom Vulkan runtime is host-connected for validated RX580/RADV SGEMM and attention-kernel gates, with lavapipe correctness coverage and structured parity reports.
+
+The full Tiny projected-attention GPU forward chain and GPU LoRA training are not yet implemented. No production model-quality, GPU-training, or GUI claim should be inferred from the current foundation.
+
+### Quick start
+
+```bash
+cd spaceslug-main
+PYTHONPATH=python python3 -m spaceslug.cli tui
+PYTHONPATH=python python3 -m spaceslug.cli tiny-infer 1 2 3
+PYTHONPATH=python python3 -m spaceslug.cli tiny-attention-gate --tokens 128 --hidden-size 64
+PYTHONPATH=python python3 -m spaceslug.cli tiny-attention-gate --tokens 128 --hidden-size 64 --software-vulkan
+PYTHONPATH=python python3 -m unittest -v
+```
+
+The TUI keyboard actions include dataset/model/training navigation, CPU verification/training, CPU inference, Vulkan GEMM, the validated attention gate, and GPU-chain status inspection. See [`docs/devlog/0012-tiny-tui-cpu-gpu-mvp.md`](docs/devlog/0012-tiny-tui-cpu-gpu-mvp.md).
 
 The proposed Spaceslug Dataset Bundle (`.dts`) preserves lossless canonical records, supports derived tokenized training data, and records lineage and checksums. See [`docs/DATASETS.md`](docs/DATASETS.md), [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md), and [`docs/DEVLOG.md`](docs/DEVLOG.md).
 
