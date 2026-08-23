@@ -45,6 +45,8 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             experiment = json.loads(Path(result["experiment"]).read_text(encoding="utf-8"))
             self.assertEqual(experiment["metrics"]["inference"]["prompt"], "Q: ")
             self.assertIsInstance(experiment["metrics"]["inference"]["next_token"], int)
+            self.assertTrue(experiment["metrics"]["artifact_revision"].startswith("sha256:"))
+            self.assertEqual(experiment["metrics"]["checkpoint_identity"]["schema_version"], 2)
 
     def test_resume_rejects_different_dataset_revision(self):
         with tempfile.TemporaryDirectory() as directory:

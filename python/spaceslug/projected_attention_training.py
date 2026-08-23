@@ -97,6 +97,8 @@ def run_projected_training(
     save_projected_checkpoint(checkpoint, model, optimizer_state, metrics)
     manifest = write_projected_artifact(artifact, model, tokenizer)
     metrics = dict(metrics)
+    metrics["artifact_revision"] = manifest["revision"]
+    metrics["checkpoint_identity"] = {"path": str(checkpoint), "schema_version": 2}
     metrics["inference"] = {"prompt": "Q: ", "next_token": next_token(model, tokenizer, "Q: ")}
     experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision)
     return {"metrics": metrics, "artifact_revision": manifest["revision"], "experiment": str(experiment_path)}
