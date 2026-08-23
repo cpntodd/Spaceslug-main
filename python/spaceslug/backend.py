@@ -71,7 +71,12 @@ class BackendSession:
         if self._device is None:
             smoke = self._run("smoke")
             self._device = next((line[8:] for line in smoke.stdout.splitlines() if line.startswith("Device: ")), None)
-        return BackendCapabilities("spaceslug", self.runtime_revision, ("vector_add",), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None)
+        operations = ["vector_add"]
+        if (self.build_dir / "sgemm").is_file() or self._library_path.is_file():
+            operations.append("sgemm")
+        if (self.build_dir / "attention").is_file():
+            operations.append("attention_kernel")
+        return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None)
 
     def execute_vector_add(self, left: list[float] | None = None, right: list[float] | None = None) -> ExecutionResult:
         left = left or [1.0] * (1 << 20)
