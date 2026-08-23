@@ -89,6 +89,14 @@ class SpaceslugTui:
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
         return result.__dict__
 
+    def compare_gpu_forward_result(self, tokens: list[int], gpu_result, *, vocab_size: int = 259) -> dict:
+        from .backend import BackendSession
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))
+        report = session.compare_gpu_result(tokens, gpu_result)
+        self.state.status = f"GPU forward parity: {report['parity']['status']}"
+        self.state.backend = report.get("gpu_backend", "vulkan")
+        return report
+
     def run_cpu_inference(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
         from .backend import BackendSession
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))

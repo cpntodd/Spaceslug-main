@@ -24,6 +24,15 @@ class TuiTest(unittest.TestCase):
         self.assertIn("training", rendered)
         self.assertEqual(tui.state.model_id, "Spaceslug-0.1B")
 
+    def test_tui_reports_structured_gpu_forward_parity(self):
+        from spaceslug.backend import ExecutionResult
+        tui = SpaceslugTui()
+        cpu = tui.run_cpu_inference([1, 2, 3])
+        gpu = ExecutionResult("ok", "tiny_projected_attention_forward", "vulkan-radv", "runtime", "RX580", False, {}, {"logits": cpu["logits"]})
+        report = tui.compare_gpu_forward_result([1, 2, 3], gpu)
+        self.assertEqual(report["parity"]["status"], "pass")
+        self.assertEqual(tui.state.backend, "vulkan-radv")
+
     def test_cpu_inference_updates_backend_and_output(self):
         tui = SpaceslugTui()
         record = tui.run_cpu_inference([1, 2, 3])
