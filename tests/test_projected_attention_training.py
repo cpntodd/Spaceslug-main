@@ -5,7 +5,7 @@ import unittest
 
 from spaceslug.dataset import create_bundle, verify_bundle
 from spaceslug.projected_attention_experiment import write_projected_experiment
-from spaceslug.projected_attention_training import ProjectedAttentionConfig, load_projected_checkpoint, save_projected_checkpoint, train_projected_attention
+from spaceslug.projected_attention_training import ProjectedAttentionConfig, load_projected_checkpoint, run_projected_training, save_projected_checkpoint, train_projected_attention
 from spaceslug.tokenizer import default_tokenizer
 
 
@@ -28,6 +28,18 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             record = json.loads(write_projected_experiment(Path(directory) / "run", "attention-run", metrics, code_revision="test").read_text(encoding="utf-8"))
             self.assertEqual(record["dataset_revision"], bundle.manifest["revision"])
             self.assertEqual(record["status"], "kept")
+
+    def test_integrated_run_produces_checkpoint_artifact_and_experiment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = verify_bundle(create_bundle(root / "fixture.dts", "integrated-fixture", {
+                "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}], "validation": [], "test": [],
+            }).root)
+            result = run_projected_training(bundle, ProjectedAttentionConfig(steps=2, learning_rate=0.1), tokenizer=default_tokenizer(), checkpoint=root / "checkpoint.json", artifact=root / "artifact.spaceslug", experiment=root / "run", code_revision="test")
+            self.assertTrue((root / "checkpoint.json").is_file())
+            self.assertTrue((root / "artifact.spaceslug" / "manifest.json").is_file())
+            self.assertEqual(result["metrics"]["optimizer_step"], 2)
+            self.assertTrue(Path(result["experiment"]).is_file())
 
 
 if __name__ == "__main__":

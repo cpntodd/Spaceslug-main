@@ -10,6 +10,8 @@ from .batching import target_only_batches
 from .dataset import DatasetBundle
 from .projected_attention_reference import ProjectedTinyAttentionModel
 from .tokenizer import ByteTokenizer
+from .projected_attention_artifact import write_projected_artifact
+from .projected_attention_experiment import write_projected_experiment
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,27 @@ def save_projected_checkpoint(path: str | Path, model: ProjectedTinyAttentionMod
                "model": {name: getattr(model, name) for name in ("vocab_size", "hidden_size", "use_positions", "embedding", "query", "key", "value", "output", "lm_head")},
                "metrics": metrics}
     Path(path).write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+
+
+def run_projected_training(
+    bundle: DatasetBundle,
+    config: ProjectedAttentionConfig,
+    *,
+    tokenizer: ByteTokenizer,
+    checkpoint: str | Path,
+    artifact: str | Path,
+    experiment: str | Path,
+    resume: str | Path | None = None,
+    code_revision: str = "unrecorded",
+) -> dict:
+    model = None
+    if resume is not None:
+        model, _ = load_projected_checkpoint(resume)
+    model, metrics = train_projected_attention(bundle, config, tokenizer=tokenizer, model=model)
+    save_projected_checkpoint(checkpoint, model, metrics)
+    manifest = write_projected_artifact(artifact, model, tokenizer)
+    experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision)
+    return {"metrics": metrics, "artifact_revision": manifest["revision"], "experiment": str(experiment_path)}
 
 
 def load_projected_checkpoint(path: str | Path) -> tuple[ProjectedTinyAttentionModel, dict]:
