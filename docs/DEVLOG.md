@@ -23,3 +23,4 @@ A devlog entry must not turn a design proposal into a claim of working behavior.
 - [0002 — Dataset bundle and measurement policy](devlog/0002-dataset-bundle-and-measurement-policy.md)
 - [0003 — Backend integration baseline](devlog/0003-backend-integration-baseline.md)
 - [0004 — Initial host, dataset, and CPU foundations](devlog/0004-initial-host-dataset-and-cpu-foundations.md)
+- [0007 — Spaceslug-Tiny training readiness](devlog/0007-spaceslug-tiny-training-readiness.md)

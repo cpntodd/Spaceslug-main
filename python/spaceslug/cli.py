@@ -7,6 +7,9 @@ from pathlib import Path
 
 from .dataset import verify_bundle
 from .tiny_model import TinyBigramModel
+from .tiny_artifact import write_tiny_artifact
+from .tiny_training import TinyTrainingConfig, save_training_checkpoint, train_tiny
+from .tokenizer import default_tokenizer
 
 
 def main() -> int:
@@ -17,11 +20,28 @@ def main() -> int:
     train = subparsers.add_parser("tiny-train")
     train.add_argument("checkpoint", type=Path)
     train.add_argument("--steps", type=int, default=20)
+    dataset_train = subparsers.add_parser("tiny-train-dataset")
+    dataset_train.add_argument("bundle", type=Path)
+    dataset_train.add_argument("checkpoint", type=Path)
+    dataset_train.add_argument("artifact", type=Path)
+    dataset_train.add_argument("--steps", type=int, default=20)
+    dataset_train.add_argument("--learning-rate", type=float, default=0.2)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
         print(f"records={bundle.manifest['record_count']} splits={bundle.stats()}")
+        return 0
+    if args.command == "tiny-train-dataset":
+        bundle = verify_bundle(args.bundle)
+        tokenizer = default_tokenizer()
+        model, optimizer, metrics = train_tiny(
+            bundle, TinyTrainingConfig(args.steps, args.learning_rate), tokenizer=tokenizer
+        )
+        save_training_checkpoint(args.checkpoint, model, optimizer, metrics)
+        manifest = write_tiny_artifact(args.artifact, model, tokenizer)
+        print(f"initial_loss={metrics['initial_train_loss']:.9f} final_loss={metrics['final_train_loss']:.9f}")
+        print(f"checkpoint={args.checkpoint} artifact={args.artifact} revision={manifest['revision']}")
         return 0
     model = TinyBigramModel.create(2)
     sequences = [[0, 1, 0, 1], [0, 1, 0, 1]]
