@@ -8,17 +8,29 @@ The host must not duplicate Vulkan device management, shader loading, descriptor
 
 ## Pinned baseline
 
-The first integration baseline is:
+The accepted first integration baseline is immutable, not a moving branch:
 
 ```text
 repository: cpntodd/Spaceslug
 local path: ../vulkan-runtime
-branch: main
-commit: 3e2b6f0
-commit subject: M7a: packed fp16 CQ4 chain + norm-layout correctness fix + bench
+branch at verification: main
+commit: a195bc6d50bb16528fe8970d74254a855264a35c
+short revision: a195bc6
+commit subject: feat: export Vulkan vector add API
 ```
 
-This revision contains validated runtime targets including `vector_add`, `sgemm`, kernel-library tests, execution-engine tests, and CQ4 integration tests. The pinned runtime baseline was freshly configured and built successfully. Device smoke reports AMD Radeon RX 580 Series (RADV POLARIS10), Vulkan 1.4.305, with validation enabled. Its full 25-test CTest suite passed on the default RADV path and with lavapipe; this is runtime evidence, not yet host-adapter evidence.
+This revision contains validated runtime targets including `vector_add`, `sgemm`, kernel-library tests, execution-engine tests, and CQ4 integration tests, plus the runtime-owned `libvulkan_runtime_api.so` vector-add entry point. On 2026-08-23, `cmake --build build/debug -j2` completed and the full 25-test CTest suite passed both on the default RADV path (AMD Radeon RX 580 Series / RADV POLARIS10) and with lavapipe (`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`). This is accepted runtime-baseline evidence; it does not make untested runtime operations host-validated.
+
+### Acceptance status
+
+| Scope | Status | Evidence |
+|---|---|---|
+| Runtime baseline at `a195bc6` | **Validated** | Build and 25/25 CTest pass on RADV and lavapipe. |
+| Host `vector_add` native API path | **Validated** | Python acceptance test loads the runtime shared library, verifies returned output against the CPU reference, and passes on RADV and lavapipe. |
+| Other host backend operations | **Proposed** | No host API or parity acceptance claim yet. |
+| Performance | **Not claimed** | Smoke timing is diagnostic only; no benchmark acceptance result is recorded. |
+
+A later runtime change requires a new immutable pin and a repeat of the applicable acceptance gates.
 
 The runtime's authoritative verification is documented in its `AGENTS.md` and `.opencode/rules/vulkan.md`: configure/build, CTest on RADV, CTest with lavapipe, and benchmark execution on a discrete GPU.
 
