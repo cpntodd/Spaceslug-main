@@ -41,6 +41,19 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             self.assertTrue(series["comparison"]["pass"])
             self.assertEqual(series["runs"][0]["config"], report["config"])
 
+    def test_two_bounded_configurations_are_recorded_as_a_series(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle = create_tiny_acceptance_bundle(root / "dataset.dts")
+            reports = []
+            for index, learning_rate in enumerate((0.1, 0.05)):
+                run = run_projected_training(bundle, ProjectedAttentionConfig(steps=1, learning_rate=learning_rate, batch_size=2), tokenizer=default_tokenizer(), checkpoint=root / f"checkpoint-{index}.json", artifact=root / f"artifact-{index}.spaceslug", experiment=root / f"run-{index}", code_revision=f"config-{index}")
+                reports.append(json.loads(Path(run["experiment"]).read_text(encoding="utf-8")))
+            series = load_regression_series(write_regression_series(root / "config-series", "tiny-config-series", reports, max_loss_increase=1.0))
+            self.assertEqual(series["series_id"], "tiny-config-series")
+            self.assertEqual(len(series["runs"]), 2)
+            self.assertEqual({run["config"]["learning_rate"] for run in series["runs"]}, {0.1, 0.05})
+
 
 if __name__ == "__main__":
     unittest.main()
