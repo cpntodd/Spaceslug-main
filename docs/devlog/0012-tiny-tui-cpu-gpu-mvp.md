@@ -20,6 +20,7 @@
 - The host now exposes projected QKV orchestration over that ABI for padded production shapes, while explicitly returning `not-run` for shapes that do not satisfy the current SGEMM tile contract. Native output is returned and can be compared against an explicit CPU projection reference with a structured pass/fail report, tolerance, maximum relative error, and first failing index. The CPU projected-attention forward is now executable through the backend, and `forward_parity.py` records a baseline logits vector plus a future Vulkan logits comparison report. Full causal attention on Vulkan remains open; no GPU logits pass is claimed until an actual Vulkan forward produces the compared vector. A reusable CPU-first inference session and TUI CPU inference action now record deterministic logits/next-token output and explicit `gpu_execution: false` metadata. The same session/TUI can consume a future structured Vulkan result and display pass/fail logits parity with runtime device metadata. It can also execute the current GPU-forward plan and visibly report `not-run` with the reason until causal-attention Vulkan orchestration exists.
 - `spaceslug tiny-cpu-verify`: explicit CPU-reference acceptance gate.
 - Vulkan backend readiness report that names the current validated operation and refuses to claim Tiny GPU inference/training prematurely.
+- TUI dashboard capability display now reports the detected runtime device, revision, software-Vulkan flag, and validated operations (`vector_add`, `sgemm`, `attention_kernel`).
 
 ## Current GPU status
 
