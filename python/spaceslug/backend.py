@@ -300,7 +300,15 @@ class BackendSession:
         for target, name in enumerate(("query", "key", "value", "output")):
             source = attention_gradients[target] if target < 3 else output_grad
             lora_gradients[name] = self._native_multi_gradients(projection_inputs[name], source, packed_a, packed_b, actual_rows, adapter.rank, target)
-        return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "gradient-partial", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "GPU forward, loss, full attention backward, and all four LoRA gradients are composed; SGD/device-resident update remains"}, {"dprojected": dprojected_values, "d_output_projection": output_grad, "d_attention": attention_gradients, "lora_gradients": lora_gradients, "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
+        learning_rate = float(learning_rate)
+        if learning_rate <= 0.0: raise ValueError("learning_rate must be positive")
+        updated_a, updated_b = list(packed_a), list(packed_b)
+        for target, name in enumerate(("query", "key", "value", "output")):
+            da, db = lora_gradients[name]
+            a_offset, b_offset = target * 64 * adapter.rank, target * adapter.rank * 64
+            for index in range(64 * adapter.rank): updated_a[a_offset + index] -= learning_rate * da[a_offset + index]
+            for index in range(adapter.rank * 64): updated_b[b_offset + index] -= learning_rate * db[b_offset + index]
+        return ExecutionResult("ok", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "gradient-update-partial", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "GPU forward, loss, backward, four gradients, and host-coordinated SGD are complete; persistent device-resident update remains"}, {"dprojected": dprojected_values, "d_output_projection": output_grad, "d_attention": attention_gradients, "lora_gradients": lora_gradients, "updated_a": updated_a, "updated_b": updated_b, "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
 
     def execute_tiny_lora_backward_chain(self, q: list[float], k: list[float], v: list[float], d_context: list[float], projection_inputs: dict[str, list[float]], adapter_a: list[float], adapter_b: list[float], rank: int) -> ExecutionResult:
         tokens = len(q) // 64
