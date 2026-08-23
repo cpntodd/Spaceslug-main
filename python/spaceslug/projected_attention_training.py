@@ -34,7 +34,12 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
         for batch in batches:
             model.train_step(batch, config.learning_rate)
     after = sum(model.loss(batch) for batch in batches) / len(batches)
-    return model, {"initial_train_loss": before, "final_train_loss": after, "optimizer_step": config.steps,
+    validation_records = bundle.records("validation")
+    validation_loss = None
+    if validation_records:
+        validation_batches = target_only_batches(validation_records, tokenizer, config.batch_size)
+        validation_loss = sum(model.loss(batch) for batch in validation_batches) / len(validation_batches)
+    return model, {"initial_train_loss": before, "final_train_loss": after, "validation_loss": validation_loss, "optimizer_step": config.steps,
                    "dataset_revision": bundle.manifest["revision"], "tokenizer_fingerprint": tokenizer.fingerprint(),
                    "config": asdict(config)}
 
