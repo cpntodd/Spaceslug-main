@@ -67,6 +67,10 @@ class BackendSession:
                     attention = self._library.spaceslug_attention
                     attention.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
                     attention.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_attention_causal"):
+                    causal = self._library.spaceslug_attention_causal
+                    causal.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
+                    causal.restype = ctypes.c_int
             except OSError as exc:
                 raise BackendError(f"failed to load {self._library_path}: {exc}") from exc
         return self._library
