@@ -35,6 +35,10 @@ The complete suite passes. `tests/test_tiny_cli_acceptance.py` is the end-to-end
 
 **Ready for bounded training-path testing; not ready for a useful-model or quality claim.** The artifact is a tiny CPU-reference projected-attention model, not a 10M–50M parameter production Tiny model. GUI integration, Vulkan execution, larger-data quality, performance, and model-quality acceptance remain open.
 
+## Acceptance classification and regression
+
+Reports now distinguish `reproducibility: pass` from `quality: not-established`; the synthetic fixture is marked `ready_for_bounded_testing: true` without claiming useful model quality. `regression.compare_reports` provides a bounded multi-run test-loss comparison with an explicit allowed increase.
+
 ## Next gate
 
-Add a report-level acceptance status that distinguishes reproducibility success from quality success, and add a bounded multi-run regression comparison before promoting this workflow beyond synthetic-fixture testing.
+Add CLI-level repeated-run comparison output and document the exact command/configuration for a bounded training test series before considering broader Tiny experimentation.
