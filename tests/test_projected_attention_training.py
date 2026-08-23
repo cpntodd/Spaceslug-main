@@ -41,6 +41,21 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             self.assertTrue((root / "artifact.spaceslug" / "manifest.json").is_file())
             self.assertEqual(result["metrics"]["optimizer_step"], 2)
             self.assertTrue(Path(result["experiment"]).is_file())
+            experiment = json.loads(Path(result["experiment"]).read_text(encoding="utf-8"))
+            self.assertEqual(experiment["metrics"]["inference"]["prompt"], "Q: ")
+            self.assertIsInstance(experiment["metrics"]["inference"]["next_token"], int)
+
+    def test_resume_rejects_different_dataset_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_bundle = verify_bundle(create_bundle(root / "first.dts", "first", {"train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}], "validation": [], "test": []}).root)
+            second_bundle = verify_bundle(create_bundle(root / "second.dts", "second", {"train": [{"record_id": "a", "prompt": "Q: ", "target": "b"}], "validation": [], "test": []}).root)
+            tokenizer = default_tokenizer()
+            first, optimizer, metrics = train_projected_attention(first_bundle, ProjectedAttentionConfig(steps=1, learning_rate=0.1), tokenizer=tokenizer)
+            checkpoint = root / "checkpoint.json"
+            save_projected_checkpoint(checkpoint, first, optimizer, metrics)
+            with self.assertRaisesRegex(ValueError, "dataset revision"):
+                run_projected_training(second_bundle, ProjectedAttentionConfig(steps=1, learning_rate=0.1), tokenizer=tokenizer, checkpoint=root / "next.json", artifact=root / "next.spaceslug", experiment=root / "next-run", resume=checkpoint)
 
     def test_resume_matches_uninterrupted_projected_training(self):
         with tempfile.TemporaryDirectory() as directory:

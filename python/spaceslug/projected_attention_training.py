@@ -12,6 +12,7 @@ from .projected_attention_reference import ProjectedTinyAttentionModel
 from .tokenizer import ByteTokenizer
 from .projected_attention_artifact import write_projected_artifact
 from .projected_attention_experiment import write_projected_experiment
+from .projected_attention_inference import next_token
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,16 @@ def save_projected_checkpoint(path: str | Path, model: ProjectedTinyAttentionMod
     Path(path).write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 
 
+def _assert_resume_compatible(metrics: dict, bundle: DatasetBundle, config: ProjectedAttentionConfig, tokenizer: ByteTokenizer) -> None:
+    if metrics.get("dataset_revision") != bundle.manifest["revision"]:
+        raise ValueError("checkpoint dataset revision does not match training bundle")
+    if metrics.get("tokenizer_fingerprint") != tokenizer.fingerprint():
+        raise ValueError("checkpoint tokenizer does not match training tokenizer")
+    previous_config = metrics.get("config", {})
+    if previous_config.get("batch_size") != config.batch_size or previous_config.get("optimizer") != config.optimizer or previous_config.get("weight_decay") != config.weight_decay:
+        raise ValueError("checkpoint training configuration is incompatible")
+
+
 def run_projected_training(
     bundle: DatasetBundle,
     config: ProjectedAttentionConfig,
@@ -75,10 +86,13 @@ def run_projected_training(
     optimizer_state = None
     if resume is not None:
         model, previous_metrics, optimizer_state = load_projected_checkpoint(resume)
+        _assert_resume_compatible(previous_metrics, bundle, config, tokenizer)
         prior_steps = int(previous_metrics["optimizer_step"])
     model, optimizer_state, metrics = train_projected_attention(bundle, config, tokenizer=tokenizer, model=model, prior_steps=prior_steps, optimizer_state=optimizer_state)
     save_projected_checkpoint(checkpoint, model, optimizer_state, metrics)
     manifest = write_projected_artifact(artifact, model, tokenizer)
+    metrics = dict(metrics)
+    metrics["inference"] = {"prompt": "Q: ", "next_token": next_token(model, tokenizer, "Q: ")}
     experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision)
     return {"metrics": metrics, "artifact_revision": manifest["revision"], "experiment": str(experiment_path)}
 
