@@ -7,7 +7,7 @@ from .parity import compare_float_arrays
 
 
 def record_cpu_forward(session: BackendSession, tokens: list[int], model) -> dict:
-    result: ExecutionResult = session.execute_projected_attention_cpu_fallback(tokens, model)
+    result: ExecutionResult = session.execute_projected_attention_forward(tokens, model)
     return {"operation": result.operation, "backend": result.backend, "tokens": list(tokens), "logits": result.output["logits"], "parity": {"status": "baseline", "tolerance": None}, "gpu_execution": False}
 
 
