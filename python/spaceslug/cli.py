@@ -14,12 +14,14 @@ from .tiny_dense_artifact import write_dense_tiny_artifact
 from .projected_attention_training import ProjectedAttentionConfig, run_projected_training
 from .regression import compare_reports
 from .regression_series import load_regression_series, write_regression_series
+from .tui import SpaceslugTui
 from .tokenizer import default_tokenizer
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="spaceslug")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("tui")
     verify = subparsers.add_parser("dataset-verify")
     verify.add_argument("bundle", type=Path)
     train = subparsers.add_parser("tiny-train")
@@ -63,6 +65,9 @@ def main() -> int:
     series.add_argument("--max-loss-increase", type=float, default=0.0)
     series.add_argument("--max-accuracy-drop", type=float, default=0.0)
     args = parser.parse_args()
+    if args.command == "tui":
+        SpaceslugTui().run()
+        return 0
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
