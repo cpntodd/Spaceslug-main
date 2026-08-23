@@ -293,7 +293,14 @@ class BackendSession:
         output_input = context_values
         output_gradients = self._native_multi_gradients(output_input, dprojected_values, adapter_a=[value for target in range(4) for row in adapter.matrices["output"].A for value in row], adapter_b=[value for target in range(4) for row in adapter.matrices["output"].B for value in row], rows=rows, rank=adapter.rank, target=3) if False else None
         attention_gradients = {mode: self._native_attention_backward(projections["query"], projections["key"], projections["value"], output_grad, actual_rows, mode) for mode in range(3)}
-        return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "backward-partial", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "GPU forward, loss, LM-head backward, output backward, and attention backward are composed; QKV projection-gradient and SGD integration remains"}, {"dprojected": dprojected_values, "d_output_projection": output_grad, "d_attention": attention_gradients, "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
+        packed_a = [value for name in ("query", "key", "value", "output") for row in adapter.matrices[name].A for value in row]
+        packed_b = [value for name in ("query", "key", "value", "output") for row in adapter.matrices[name].B for value in row]
+        projection_inputs = {name: flat for name, flat in (("query", flat), ("key", flat), ("value", flat), ("output", context_values))}
+        lora_gradients = {}
+        for target, name in enumerate(("query", "key", "value", "output")):
+            source = attention_gradients[target] if target < 3 else output_grad
+            lora_gradients[name] = self._native_multi_gradients(projection_inputs[name], source, packed_a, packed_b, actual_rows, adapter.rank, target)
+        return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "gradient-partial", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "GPU forward, loss, full attention backward, and all four LoRA gradients are composed; SGD/device-resident update remains"}, {"dprojected": dprojected_values, "d_output_projection": output_grad, "d_attention": attention_gradients, "lora_gradients": lora_gradients, "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
 
     def execute_tiny_lora_backward_chain(self, q: list[float], k: list[float], v: list[float], d_context: list[float], projection_inputs: dict[str, list[float]], adapter_a: list[float], adapter_b: list[float], rank: int) -> ExecutionResult:
         tokens = len(q) // 64
