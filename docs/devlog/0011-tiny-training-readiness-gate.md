@@ -43,6 +43,10 @@ Reports now distinguish `reproducibility: pass` from `quality: not-established`;
 
 `spaceslug tiny-regression REPORT...` compares held-out test loss and token accuracy across bounded runs, with explicit `--max-loss-increase` and `--max-accuracy-drop` thresholds. A repeated committed-fixture report passes with zero allowed regression while still reporting zero fixture accuracy honestly.
 
+## Persisted regression-series gate
+
+`spaceslug tiny-regression-series OUTPUT REPORT...` writes a versioned `regression.json` containing run IDs, code/dataset revisions, complete configurations, thresholds, and loss/accuracy comparison. The committed fixture series passes with zero allowed regression.
+
 ## Next gate
 
-Add a small persisted regression-series record with run IDs and configurations before considering broader Tiny experimentation.
+Add a bounded multi-seed or multi-configuration fixture series and archive its report before considering broader Tiny experimentation.
