@@ -24,7 +24,7 @@
 
 ## Current GPU status
 
-The custom runtime is now host-exposed for the validated fp32 `sgemm` parity executable and the validated attention kernel gate (`T=128, D=64`), with a CPU-first gate. Tiny GPU inference and training are **not implemented yet**: embeddings, projections, causal masking, and lm-head orchestration remain separate. The inference session and TUI now expose the complete planned Tiny forward chain (`embedding_upload`, QKV SGEMM, causal softmax, output projection, lm-head) and visibly report that the chain is `not-run` until orchestration is implemented; keyboard help includes CPU inference and GPU-chain inspection actions. The next operation is Tiny projected-attention forward parity, followed by LoRA forward/backward parity and optimizer/update parity. CPU remains authoritative.
+The custom runtime is now host-exposed for the validated fp32 `sgemm` parity executable and the validated attention kernel gate (`T=128, D=64`), with a CPU-first gate. Tiny GPU inference and training are **not implemented yet**: embeddings, projections, causal masking, and lm-head orchestration remain separate. The inference session and TUI now expose the complete planned Tiny forward chain (`embedding_upload`, QKV SGEMM, causal softmax, output projection, lm-head) and visibly report that the chain is `not-run` until orchestration is implemented; keyboard help includes CPU inference and GPU-chain inspection actions. CLI commands `tiny-infer TOKENS...` and `tiny-gpu-chain TOKENS...` expose the same CPU baseline and explicit Vulkan chain status for non-interactive testing. The next operation is Tiny projected-attention forward parity, followed by LoRA forward/backward parity and optimizer/update parity. CPU remains authoritative.
 
 ## Verification
 
