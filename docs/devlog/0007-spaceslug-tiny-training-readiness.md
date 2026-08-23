@@ -17,7 +17,8 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - Deterministic JSON training checkpoints containing weights, AdamW state, configuration, dataset revision, tokenizer fingerprint, and loss metrics.
 - `spaceslug tiny-train-dataset BUNDLE CHECKPOINT ARTIFACT` to produce a checkpoint and artifact without overwriting existing outputs.
 - A smallest dense causal CPU reference model with explicit embedding/output gradients. Centered finite differences validate representative embedding, output, and bias derivatives before optimization is relied on.
-- Dataset-backed dense-model training, deterministic dense checkpoints, and a schema-compatible `experiment.json` record. `spaceslug tiny-dense-train BUNDLE CHECKPOINT EXPERIMENT` produces all three without overwriting the experiment directory.
+- Dataset-backed dense-model training, deterministic dense checkpoints, a checksummed dense artifact, and a schema-compatible `experiment.json` record. `spaceslug tiny-dense-train BUNDLE CHECKPOINT ARTIFACT EXPERIMENT` produces all four, and accepts `--resume` for deterministic checkpoint continuation.
+- Bounded dense-training controls: `--gradient-clip` and `--memory-budget-bytes`. The memory planner rejects an over-budget plan before any update is applied.
 
 ## Acceptance evidence
 
@@ -29,8 +30,8 @@ The acceptance tests establish deterministic UTF-8 tokenization, artifact checks
 
 ## Limitations
 
-The original dataset CLI produces the CPU-reference bigram artifact; the dense CLI produces a dense checkpoint and experiment record, but no dense artifact or resume path yet. The dense causal model is not an attention-based transformer. There is no batching, target-only chat masking, gradient clipping, scheduler, memory planner, or CLI resume option. These outputs are suitable for repeatable training-path testing only; they are not a claim of Vulkan inference, GUI readiness, or 10M–50M-parameter model readiness.
+The original dataset CLI produces the CPU-reference bigram artifact. The dense CLI now produces a dense artifact, checkpoint, and experiment record and can resume a deterministic SGD checkpoint; its bounded preflight estimates parameter-and-gradient memory only. The dense causal model is not an attention-based transformer. There is no batching, target-only chat masking, scheduler, optimizer state beyond SGD, or full activation/workspace memory planner. These outputs are suitable for repeatable training-path testing only; they are not a claim of Vulkan inference, GUI readiness, or 10M–50M-parameter model readiness.
 
 ## Next gate
 
-Add a dense artifact reader/writer and checkpoint resume through the CLI. Then add bounded training configuration (including clipping and a memory-budget preflight) before calling Spaceslug-Tiny ready for broader training tests.
+Add batched target-only loss masking and a dense attention-based causal block. Preserve the existing numerical-gradient, deterministic resume, artifact, experiment-record, and preflight acceptance evidence as the model architecture grows.
