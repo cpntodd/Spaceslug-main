@@ -11,6 +11,7 @@ from .tiny_artifact import write_tiny_artifact
 from .tiny_training import TinyTrainingConfig, save_training_checkpoint, train_tiny
 from .tiny_dense_training import DenseTinyTrainingConfig, load_dense_checkpoint, save_dense_checkpoint, train_dense_tiny, write_experiment_record
 from .tiny_dense_artifact import write_dense_tiny_artifact
+from .projected_attention_training import ProjectedAttentionConfig, run_projected_training
 from .tokenizer import default_tokenizer
 
 
@@ -39,11 +40,30 @@ def main() -> int:
     dense_train.add_argument("--hidden-size", type=int, default=16)
     dense_train.add_argument("--gradient-clip", type=float)
     dense_train.add_argument("--memory-budget-bytes", type=int)
+    projected_train = subparsers.add_parser("tiny-attention-train")
+    projected_train.add_argument("bundle", type=Path)
+    projected_train.add_argument("checkpoint", type=Path)
+    projected_train.add_argument("artifact", type=Path)
+    projected_train.add_argument("experiment", type=Path)
+    projected_train.add_argument("--steps", type=int, default=10)
+    projected_train.add_argument("--learning-rate", type=float, default=0.2)
+    projected_train.add_argument("--batch-size", type=int, default=1)
+    projected_train.add_argument("--resume", type=Path)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
         print(f"records={bundle.manifest['record_count']} splits={bundle.stats()}")
+        return 0
+    if args.command == "tiny-attention-train":
+        bundle = verify_bundle(args.bundle)
+        result = run_projected_training(
+            bundle, ProjectedAttentionConfig(args.steps, args.learning_rate, args.batch_size),
+            tokenizer=default_tokenizer(), checkpoint=args.checkpoint, artifact=args.artifact,
+            experiment=args.experiment, resume=args.resume,
+        )
+        print(f"initial_loss={result['metrics']['initial_train_loss']:.9f} final_loss={result['metrics']['final_train_loss']:.9f}")
+        print(f"artifact_revision={result['artifact_revision']} experiment={result['experiment']}")
         return 0
     if args.command == "tiny-dense-train":
         bundle = verify_bundle(args.bundle)
