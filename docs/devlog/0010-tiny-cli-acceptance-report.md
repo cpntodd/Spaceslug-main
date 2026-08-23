@@ -34,6 +34,10 @@ The artifact was separately loaded with checksum and tokenizer verification in t
 
 The fixture is synthetic and the result is a correctness/reproducibility smoke, not a language-quality or performance claim. The model remains CPU-reference-only and small.
 
+## Reproducible fixture/report reference
+
+`tests/fixtures/tiny_acceptance.py` defines the canonical `tiny-acceptance-v1` bundle shape used by acceptance tests. The inference acceptance test verifies that a checksum-verified artifact reproduces the report's recorded artifact revision and greedy next-token result.
+
 ## Next gate
 
-Commit a minimal reproducible fixture/report reference and enforce that loading the emitted artifact reproduces the experiment's recorded inference result.
+Add a small committed CLI acceptance harness that consumes this fixture, writes an experiment report, and checks the held-out metric and loaded-artifact inference in one test.
