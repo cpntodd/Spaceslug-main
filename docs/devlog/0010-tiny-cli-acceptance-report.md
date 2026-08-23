@@ -36,8 +36,8 @@ The fixture is synthetic and the result is a correctness/reproducibility smoke, 
 
 ## Reproducible fixture/report reference
 
-`tests/fixtures/tiny_acceptance.py` defines the canonical `tiny-acceptance-v1` bundle shape used by acceptance tests. `tests/test_tiny_cli_acceptance.py` runs the complete training workflow, verifies held-out test loss, loads the emitted artifact, and checks that its greedy next-token result matches the experiment report.
+`tests/fixtures/tiny_acceptance.py` defines the canonical `tiny-acceptance-v1` bundle shape used by acceptance tests. `tests/test_tiny_cli_acceptance.py` runs the complete training workflow, verifies held-out test loss and masked token accuracy, loads the emitted artifact, and checks that its greedy next-token result matches the experiment report.
 
 ## Next gate
 
-Add a small committed CLI acceptance harness that consumes this fixture, writes an experiment report, and checks the held-out metric and loaded-artifact inference in one test.
+Run the committed fixture through the CLI harness and archive the resulting report identity, including held-out loss, token accuracy, artifact revision, and loaded-artifact inference.
