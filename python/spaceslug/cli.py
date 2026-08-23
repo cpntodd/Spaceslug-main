@@ -9,6 +9,7 @@ from .dataset import verify_bundle
 from .tiny_model import TinyBigramModel
 from .tiny_artifact import write_tiny_artifact
 from .tiny_training import TinyTrainingConfig, save_training_checkpoint, train_tiny
+from .tiny_dense_training import DenseTinyTrainingConfig, save_dense_checkpoint, train_dense_tiny, write_experiment_record
 from .tokenizer import default_tokenizer
 
 
@@ -26,11 +27,28 @@ def main() -> int:
     dataset_train.add_argument("artifact", type=Path)
     dataset_train.add_argument("--steps", type=int, default=20)
     dataset_train.add_argument("--learning-rate", type=float, default=0.2)
+    dense_train = subparsers.add_parser("tiny-dense-train")
+    dense_train.add_argument("bundle", type=Path)
+    dense_train.add_argument("checkpoint", type=Path)
+    dense_train.add_argument("experiment", type=Path)
+    dense_train.add_argument("--steps", type=int, default=30)
+    dense_train.add_argument("--learning-rate", type=float, default=0.5)
+    dense_train.add_argument("--hidden-size", type=int, default=16)
     args = parser.parse_args()
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
         print(f"records={bundle.manifest['record_count']} splits={bundle.stats()}")
+        return 0
+    if args.command == "tiny-dense-train":
+        bundle = verify_bundle(args.bundle)
+        model, metrics = train_dense_tiny(
+            bundle, DenseTinyTrainingConfig(args.steps, args.learning_rate, args.hidden_size), tokenizer=default_tokenizer()
+        )
+        save_dense_checkpoint(args.checkpoint, model, metrics)
+        record = write_experiment_record(args.experiment, args.experiment.name, metrics)
+        print(f"initial_loss={metrics['initial_train_loss']:.9f} final_loss={metrics['final_train_loss']:.9f}")
+        print(f"checkpoint={args.checkpoint} experiment={record}")
         return 0
     if args.command == "tiny-train-dataset":
         bundle = verify_bundle(args.bundle)
