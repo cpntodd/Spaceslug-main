@@ -91,6 +91,10 @@ class BackendSession:
                     attention_backward = self._library.spaceslug_attention_causal_backward
                     attention_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
                     attention_backward.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_lora_sgd_multi"):
+                    sgd_multi = self._library.spaceslug_lora_sgd_multi
+                    sgd_multi.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_uint32]
+                    sgd_multi.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_train_step"):
                     lora_train = self._library.spaceslug_lora_train_step
                     lora_train.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_uint32, ctypes.c_uint32]
@@ -119,6 +123,8 @@ class BackendSession:
                     operations.append("attention_causal_backward_abi")
                 if hasattr(native, "spaceslug_lora_gradients_multi"):
                     operations.append("lora_gradients_multi_abi")
+                if hasattr(native, "spaceslug_lora_sgd_multi"):
+                    operations.append("lora_sgd_multi_abi")
                 if hasattr(native, "spaceslug_causal_loss"):
                     operations.append("causal_loss_abi")
             except BackendError:
@@ -302,12 +308,11 @@ class BackendSession:
             lora_gradients[name] = self._native_multi_gradients(projection_inputs[name], source, packed_a, packed_b, actual_rows, adapter.rank, target)
         learning_rate = float(learning_rate)
         if learning_rate <= 0.0: raise ValueError("learning_rate must be positive")
-        updated_a, updated_b = list(packed_a), list(packed_b)
-        for target, name in enumerate(("query", "key", "value", "output")):
-            da, db = lora_gradients[name]
-            a_offset, b_offset = target * 64 * adapter.rank, target * adapter.rank * 64
-            for index in range(64 * adapter.rank): updated_a[a_offset + index] -= learning_rate * da[a_offset + index]
-            for index in range(adapter.rank * 64): updated_b[b_offset + index] -= learning_rate * db[b_offset + index]
+        if not hasattr(self._native(), "spaceslug_lora_sgd_multi"):
+            return ExecutionResult("ready", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "gradient-partial", "gpu_execution": True, "reason": "GPU gradients complete but multi-adapter SGD ABI unavailable"}, {"dprojected": dprojected_values, "lora_gradients": lora_gradients})
+        packed_da = [value for target in range(4) for value in lora_gradients[("query", "key", "value", "output")[target]][0][target * 64 * adapter.rank:(target + 1) * 64 * adapter.rank]]
+        packed_db = [value for target in range(4) for value in lora_gradients[("query", "key", "value", "output")[target]][1][target * adapter.rank * 64:(target + 1) * adapter.rank * 64]]
+        updated_a, updated_b = self._native_multi_sgd(packed_a, packed_b, packed_da, packed_db, learning_rate, adapter.rank)
         return ExecutionResult("ok", "tiny_lora_train_graph", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "gradient-update-partial", "gpu_execution": True, "loss": loss_result.metrics.get("loss"), "dlogits": loss_result.metrics.get("dlogits"), "reason": "GPU forward, loss, backward, four gradients, and host-coordinated SGD are complete; persistent device-resident update remains"}, {"dprojected": dprojected_values, "d_output_projection": output_grad, "d_attention": attention_gradients, "lora_gradients": lora_gradients, "updated_a": updated_a, "updated_b": updated_b, "logits": logits[:actual_rows * vp], "row_loss": loss_result.output["row_loss"][:actual_rows]})
 
     def execute_tiny_lora_backward_chain(self, q: list[float], k: list[float], v: list[float], d_context: list[float], projection_inputs: dict[str, list[float]], adapter_a: list[float], adapter_b: list[float], rank: int) -> ExecutionResult:
@@ -425,6 +430,19 @@ class BackendSession:
             else: os.environ["VK_ICD_FILENAMES"] = old_icd
         if code != 0: raise BackendError(f"native projection backward returned {code}")
         return list(result)
+
+    def _native_multi_sgd(self, a: list[float], b: list[float], da: list[float], db: list[float], learning_rate: float, rank: int) -> tuple[list[float], list[float]]:
+        import array, ctypes, os
+        aa, bb, dda, ddb = (array.array("f", values) for values in (a, b, da, db))
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_lora_sgd_multi((ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), (ctypes.c_float * len(dda)).from_buffer(dda), (ctypes.c_float * len(ddb)).from_buffer(ddb), learning_rate, rank)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native multi LoRA SGD returned {code}")
+        return aa.tolist(), bb.tolist()
 
     def _native_multi_gradients(self, x: list[float], dy: list[float], a: list[float], b: list[float], rows: int, rank: int, target: int) -> tuple[list[float], list[float]]:
         import array, ctypes, os
