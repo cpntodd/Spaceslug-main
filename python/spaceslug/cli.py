@@ -18,6 +18,7 @@ from .tui import SpaceslugTui
 from .cpu_verification import verify_cpu_training
 from .inference_session import InferenceSession
 from .projected_attention_reference import ProjectedTinyAttentionModel
+from .backend import BackendSession
 from .tokenizer import default_tokenizer
 
 
@@ -33,6 +34,9 @@ def main() -> int:
     infer.add_argument("tokens", nargs="+", type=int)
     gpu_chain = subparsers.add_parser("tiny-gpu-chain")
     gpu_chain.add_argument("tokens", nargs="+", type=int)
+    attention_gate = subparsers.add_parser("tiny-attention-gate")
+    attention_gate.add_argument("--tokens", type=int, default=128)
+    attention_gate.add_argument("--hidden-size", type=int, default=64)
     verify = subparsers.add_parser("dataset-verify")
     verify.add_argument("bundle", type=Path)
     train = subparsers.add_parser("tiny-train")
@@ -76,14 +80,20 @@ def main() -> int:
     series.add_argument("--max-loss-increase", type=float, default=0.0)
     series.add_argument("--max-accuracy-drop", type=float, default=0.0)
     args = parser.parse_args()
+    if args.command == "tiny-attention-gate":
+        import json
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        values = [1.0] * (args.tokens * args.hidden_size)
+        print(json.dumps(session.run_attention_gate(values, values, values, args.tokens, args.hidden_size), sort_keys=True))
+        return 0
     if args.command == "tiny-infer":
         import json
-        session = InferenceSession(__import__("spaceslug.backend", fromlist=["BackendSession"]).BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
         print(json.dumps(session.run(args.tokens), sort_keys=True))
         return 0
     if args.command == "tiny-gpu-chain":
         import json
-        session = InferenceSession(__import__("spaceslug.backend", fromlist=["BackendSession"]).BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
         print(json.dumps(session.run_gpu_chain_plan(args.tokens), sort_keys=True))
         return 0
     if args.command == "tiny-cpu-verify":
