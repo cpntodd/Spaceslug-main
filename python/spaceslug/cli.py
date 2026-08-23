@@ -16,6 +16,8 @@ from .regression import compare_reports
 from .regression_series import load_regression_series, write_regression_series
 from .tui import SpaceslugTui
 from .cpu_verification import verify_cpu_training
+from .inference_session import InferenceSession
+from .projected_attention_reference import ProjectedTinyAttentionModel
 from .tokenizer import default_tokenizer
 
 
@@ -27,6 +29,10 @@ def main() -> int:
     cpu_gate.add_argument("bundle", type=Path)
     cpu_gate.add_argument("--steps", type=int, default=2)
     cpu_gate.add_argument("--learning-rate", type=float, default=0.1)
+    infer = subparsers.add_parser("tiny-infer")
+    infer.add_argument("tokens", nargs="+", type=int)
+    gpu_chain = subparsers.add_parser("tiny-gpu-chain")
+    gpu_chain.add_argument("tokens", nargs="+", type=int)
     verify = subparsers.add_parser("dataset-verify")
     verify.add_argument("bundle", type=Path)
     train = subparsers.add_parser("tiny-train")
@@ -70,6 +76,16 @@ def main() -> int:
     series.add_argument("--max-loss-increase", type=float, default=0.0)
     series.add_argument("--max-accuracy-drop", type=float, default=0.0)
     args = parser.parse_args()
+    if args.command == "tiny-infer":
+        import json
+        session = InferenceSession(__import__("spaceslug.backend", fromlist=["BackendSession"]).BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        print(json.dumps(session.run(args.tokens), sort_keys=True))
+        return 0
+    if args.command == "tiny-gpu-chain":
+        import json
+        session = InferenceSession(__import__("spaceslug.backend", fromlist=["BackendSession"]).BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        print(json.dumps(session.run_gpu_chain_plan(args.tokens), sort_keys=True))
+        return 0
     if args.command == "tiny-cpu-verify":
         import json
         result = verify_cpu_training(args.bundle, steps=args.steps, learning_rate=args.learning_rate)
