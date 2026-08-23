@@ -21,6 +21,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - Bounded dense-training controls: `--gradient-clip` and `--memory-budget-bytes`. The memory planner rejects an over-budget plan before any update is applied.
 - Deterministic padded causal batches with explicit target-only masks for prompt/completion records, plus a dependency-free causal self-attention semantic reference that proves future tokens cannot affect prior outputs.
 - A trainable single-head attention-scale reference integrated with those masks. Its analytic masked-loss gradient matches a centered finite difference, and fixed-batch optimization reduces the target-only loss.
+- An explicit projected causal-attention forward reference with separate Q/K/V/output tensor paths. Centered finite differences establish that representative elements of every projection affect the target-only loss.
 
 ## Acceptance evidence
 
@@ -36,4 +37,4 @@ The original dataset CLI produces the CPU-reference bigram artifact. The dense C
 
 ## Next gate
 
-Expand the trainable attention reference from the isolated scale parameter to explicit Q/K/V/output projections, retaining independent numerical-gradient checks and target-only masking. Then connect that model to the deterministic dataset/checkpoint/artifact/experiment workflow.
+Implement analytic backward propagation for the explicit Q/K/V/output projections and compare representative gradients to centered finite differences. Then connect that trainable projected-attention model to the deterministic dataset/checkpoint/artifact/experiment workflow.
