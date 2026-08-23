@@ -15,9 +15,9 @@ A user can open the GUI, train or adapt a small Spaceslug model, chat with it th
 
 ## Current status
 
-**Experimental CPU-first MVP foundation.** The repository now includes a mouse-capable curses TUI, filesystem dataset selection, intended model-size profiles, deterministic Spaceslug-Tiny CPU training/inference, checkpoint/artifact verification, live loss callbacks, and explicit CPU acceptance gates. The custom Vulkan runtime is host-connected for validated RX580/RADV SGEMM and attention-kernel gates, with lavapipe correctness coverage and structured parity reports.
+**Experimental CPU-first MVP with a bounded GPU LoRA training path.** The repository includes the mouse-capable curses TUI, deterministic Spaceslug-Tiny CPU training/inference, checkpoint/artifact verification, live loss callbacks, and explicit CPU acceptance gates. The custom Vulkan runtime is host-connected for validated RX580/RADV SGEMM and attention-kernel gates, with lavapipe correctness coverage and structured parity reports.
 
-Tiny projected-attention GPU inference is implemented for the fixed MVP contract (single-head H=64, V=259, padded T=128) with CPU/RADV logits parity and a lavapipe check. A fixed Tiny LoRA tensor train-step is implemented for H=64, rank=4, and 1<=M<=128: it executes Vulkan delta forward, dA/dB gradients, and SGD update with CPU-reference parity gates on RADV and lavapipe. This is not end-to-end language-model loss/backpropagation or dataset training; CPU remains authoritative and no broader GPU-training claim should be inferred.
+Tiny projected-attention GPU LoRA training is implemented for the fixed MVP contract (single-head H=64, V=259, padded T=128, rank=4): LoRA-aware Q/K/V/output forward composition, padded-vocabulary causal loss and dLogits, LM-head/output/causal-attention backward, four-adapter dA/dB gradients, and GPU SGD updates are composed and CPU-parity tested on both RADV and lavapipe. The repeated trainer remains host-orchestrated with transient per-ABI buffers; persistent device-resident command/buffer reuse, gradient accumulation, AdamW, and dataset-scale training are unsupported. CPU remains authoritative outside this bounded experimental path.
 
 ### Quick start
 
