@@ -141,6 +141,15 @@ class BackendSession:
         """Current explicit forward dispatcher; GPU path is gated and not yet active."""
         return self.execute_projected_attention_cpu_fallback(tokens, model)
 
+    def execute_attention_kernel_parity(self, q: list[float], k: list[float], v: list[float], tokens: int, hidden_size: int) -> ExecutionResult:
+        if tokens <= 0 or hidden_size != 64 or tokens % 32:
+            return ExecutionResult("not-run", "attention", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "attention kernel contract requires D=64 and T divisible by 32"}, {"tokens": tokens, "hidden_size": hidden_size})
+        completed = self._run("attention")
+        output = completed.stdout.strip()
+        if "PASS" not in output:
+            raise BackendError(f"attention parity did not pass: {output}")
+        return ExecutionResult("ok", "attention", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "execution": "validated-executable"}, {"runtime_report": output})
+
     def execute_projected_attention_gpu_plan(self, tokens: list[int], model: Any) -> ExecutionResult:
         plan = self.projected_attention_forward_plan(hidden_size=model.hidden_size, sequence_length=len(tokens), vocab_size=model.vocab_size)
         return ExecutionResult("not-run", plan["operation"], "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "causal attention Vulkan orchestration is not implemented"}, {"plan": plan})
