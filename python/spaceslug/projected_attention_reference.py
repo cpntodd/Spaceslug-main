@@ -1,0 +1,60 @@
+"""Single-head causal attention with explicit Q/K/V/output projection parameters."""
+
+from __future__ import annotations
+
+import math
+
+from .batching import CausalBatch
+
+
+def _matvec(vector: list[float], matrix: list[list[float]]) -> list[float]:
+    return [sum(value * matrix[row][column] for row, value in enumerate(vector)) for column in range(len(matrix[0]))]
+
+
+class ProjectedTinyAttentionModel:
+    """Inspectable forward reference for a projected causal-attention block.
+
+    Parameters are stored separately to make each tensor path and finite-difference
+    acceptance target explicit before a complete analytic backward implementation.
+    """
+
+    def __init__(self, vocab_size: int, hidden_size: int = 2) -> None:
+        if vocab_size <= 0 or hidden_size <= 0:
+            raise ValueError("vocab_size and hidden_size must be positive")
+        self.vocab_size, self.hidden_size = vocab_size, hidden_size
+        self.embedding = [[((token + 1) * (channel + 3) % 17 - 8) / 10.0 for channel in range(hidden_size)] for token in range(vocab_size)]
+        def matrix(offset: int) -> list[list[float]]:
+            return [[((row + offset) * (column + 5) % 11 - 5) / 10.0 for column in range(hidden_size)] for row in range(hidden_size)]
+        self.query, self.key, self.value, self.output = matrix(2), matrix(3), matrix(5), matrix(7)
+        self.lm_head = [[((channel + 11) * (token + 3) % 13 - 6) / 10.0 for token in range(vocab_size)] for channel in range(hidden_size)]
+
+    def loss(self, batch: CausalBatch) -> float:
+        total, count, scale = 0.0, 0, 1.0 / math.sqrt(self.hidden_size)
+        for inputs, targets, mask in zip(batch.input_tokens, batch.target_tokens, batch.loss_mask):
+            states = [self.embedding[token] for token in inputs]
+            keys, values = [_matvec(state, self.key) for state in states], [_matvec(state, self.value) for state in states]
+            for position, (target, include) in enumerate(zip(targets, mask)):
+                if not include:
+                    continue
+                query = _matvec(states[position], self.query)
+                scores = [sum(query[channel] * keys[index][channel] for channel in range(self.hidden_size)) * scale for index in range(position + 1)]
+                maximum = max(scores)
+                raw = [math.exp(score - maximum) for score in scores]
+                weights = [value / sum(raw) for value in raw]
+                context = [sum(weights[index] * values[index][channel] for index in range(position + 1)) for channel in range(self.hidden_size)]
+                projected = _matvec(context, self.output)
+                logits = _matvec(projected, self.lm_head)
+                maximum = max(logits)
+                raw = [math.exp(logit - maximum) for logit in logits]
+                probability = raw[target] / sum(raw)
+                total -= math.log(max(probability, 1e-30))
+                count += 1
+        if not count:
+            raise ValueError("loss mask contains no target tokens")
+        return total / count
+
+    def parameter(self, tensor: str, row: int, column: int) -> float:
+        return getattr(self, tensor)[row][column]
+
+    def set_parameter(self, tensor: str, row: int, column: int, value: float) -> None:
+        getattr(self, tensor)[row][column] = value
