@@ -28,3 +28,4 @@ A devlog entry must not turn a design proposal into a claim of working behavior.
 - [0009 — Tiny resume and inference identity](devlog/0009-tiny-resume-and-inference-identity.md)
 - [0010 — Tiny CLI acceptance report](devlog/0010-tiny-cli-acceptance-report.md)
 - [0011 — Spaceslug-Tiny training readiness gate](devlog/0011-tiny-training-readiness-gate.md)
+- [0012 — Tiny TUI and CPU-to-GPU MVP boundary](devlog/0012-tiny-tui-cpu-gpu-mvp.md)
