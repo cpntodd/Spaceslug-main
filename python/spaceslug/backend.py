@@ -63,6 +63,10 @@ class BackendSession:
                 sgemm = self._library.spaceslug_sgemm
                 sgemm.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
                 sgemm.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_attention"):
+                    attention = self._library.spaceslug_attention
+                    attention.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
+                    attention.restype = ctypes.c_int
             except OSError as exc:
                 raise BackendError(f"failed to load {self._library_path}: {exc}") from exc
         return self._library
@@ -143,7 +147,7 @@ class BackendSession:
         return result
 
     def execute_projected_attention_forward(self, tokens: list[int], model: Any) -> ExecutionResult:
-        """Current explicit forward dispatcher; GPU path is gated and not yet active."""
+        """Current explicit forward dispatcher; GPU path remains gated until causal ABI exists."""
         return self.execute_projected_attention_cpu_fallback(tokens, model)
 
     def execute_attention_kernel_parity(self, q: list[float], k: list[float], v: list[float], tokens: int, hidden_size: int) -> ExecutionResult:
