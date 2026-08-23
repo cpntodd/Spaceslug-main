@@ -19,6 +19,10 @@ class InferenceSession:
         self.last_record = record
         return record
 
+    def run_attention_gate(self, q: list[float], k: list[float], v: list[float], tokens: int, hidden_size: int) -> dict:
+        result = self.backend.execute_attention_kernel_parity(q, k, v, tokens, hidden_size)
+        return {"operation": result.operation, "backend": result.backend, "status": result.status, "parity": result.metrics.get("parity"), "runtime_revision": result.runtime_revision, "device": result.device, "report": result.output}
+
     def run_gpu_plan(self, tokens: list[int]) -> dict:
         gpu_result = self.backend.execute_projected_attention_gpu_plan(tokens, self.model)
         return self.compare_gpu_result(tokens, gpu_result)

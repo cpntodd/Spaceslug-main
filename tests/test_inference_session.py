@@ -6,6 +6,12 @@ from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
 
 class InferenceSessionTest(unittest.TestCase):
+    def test_attention_gate_reports_runtime_parity(self):
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        result = session.run_attention_gate([1.0] * (128 * 64), [1.0] * (128 * 64), [1.0] * (128 * 64), 128, 64)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["parity"], "cpu-reference")
+
     def test_gpu_plan_is_explicitly_not_run(self):
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
         result = session.run_gpu_plan([1, 2, 3])
