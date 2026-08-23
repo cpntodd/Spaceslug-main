@@ -28,8 +28,9 @@ class ProjectedTinyAttentionModel:
         self.query, self.key, self.value, self.output = matrix(2), matrix(3), matrix(5), matrix(7)
         self.lm_head = [[((channel + 11) * (token + 3) % 13 - 6) / 10.0 for token in range(vocab_size)] for channel in range(hidden_size)]
 
-    def loss(self, batch: CausalBatch) -> float:
+    def loss_and_gradients(self, batch: CausalBatch) -> tuple[float, dict[str, list[list[float]]]]:
         total, count, scale = 0.0, 0, 1.0 / math.sqrt(self.hidden_size)
+        gradients = {name: [[0.0] * self.hidden_size for _ in range(self.hidden_size)] for name in ("query", "key", "value", "output")}
         for inputs, targets, mask in zip(batch.input_tokens, batch.target_tokens, batch.loss_mask):
             states = [self.embedding[token] for token in inputs]
             keys, values = [_matvec(state, self.key) for state in states], [_matvec(state, self.value) for state in states]
@@ -46,12 +47,45 @@ class ProjectedTinyAttentionModel:
                 logits = _matvec(projected, self.lm_head)
                 maximum = max(logits)
                 raw = [math.exp(logit - maximum) for logit in logits]
-                probability = raw[target] / sum(raw)
-                total -= math.log(max(probability, 1e-30))
+                probabilities = [value / sum(raw) for value in raw]
+                total -= math.log(max(probabilities[target], 1e-30))
                 count += 1
+                d_projected = [sum((probabilities[token] - (token == target)) * self.lm_head[channel][token] for token in range(self.vocab_size)) for channel in range(self.hidden_size)]
+                d_context = [sum(d_projected[column] * self.output[channel][column] for column in range(self.hidden_size)) for channel in range(self.hidden_size)]
+                for row in range(self.hidden_size):
+                    for column in range(self.hidden_size):
+                        gradients["output"][row][column] += context[row] * d_projected[column]
+                d_weight = [sum(d_context[channel] * values[index][channel] for channel in range(self.hidden_size)) for index in range(position + 1)]
+                d_value = [[weights[index] * d_context[channel] for channel in range(self.hidden_size)] for index in range(position + 1)]
+                expected = sum(weights[index] * d_weight[index] for index in range(position + 1))
+                d_score = [weights[index] * (d_weight[index] - expected) for index in range(position + 1)]
+                d_query = [sum(d_score[index] * scale * keys[index][channel] for index in range(position + 1)) for channel in range(self.hidden_size)]
+                d_key = [[d_score[index] * scale * query[channel] for channel in range(self.hidden_size)] for index in range(position + 1)]
+                for row in range(self.hidden_size):
+                    for column in range(self.hidden_size):
+                        gradients["query"][row][column] += states[position][row] * d_query[column]
+                for index in range(position + 1):
+                    for row in range(self.hidden_size):
+                        for column in range(self.hidden_size):
+                            gradients["key"][row][column] += states[index][row] * d_key[index][column]
+                            gradients["value"][row][column] += states[index][row] * d_value[index][column]
         if not count:
             raise ValueError("loss mask contains no target tokens")
-        return total / count
+        return total / count, {name: [[value / count for value in row] for row in matrix] for name, matrix in gradients.items()}
+
+    def loss(self, batch: CausalBatch) -> float:
+        return self.loss_and_gradients(batch)[0]
+
+    def train_step(self, batch: CausalBatch, learning_rate: float) -> float:
+        if learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive")
+        loss, gradients = self.loss_and_gradients(batch)
+        for name, matrix in gradients.items():
+            parameter = getattr(self, name)
+            for row in range(self.hidden_size):
+                for column in range(self.hidden_size):
+                    parameter[row][column] -= learning_rate * matrix[row][column]
+        return loss
 
     def parameter(self, tensor: str, row: int, column: int) -> float:
         return getattr(self, tensor)[row][column]

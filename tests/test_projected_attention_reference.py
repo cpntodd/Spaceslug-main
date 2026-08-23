@@ -11,8 +11,9 @@ class ProjectedAttentionReferenceTest(unittest.TestCase):
         self.batch = target_only_batches([{"prompt": "Q: ", "target": "a"}, {"prompt": "Q: ", "target": "b"}], tokenizer, 2)[0]
         self.model = ProjectedTinyAttentionModel(tokenizer.vocab_size, 2)
 
-    def test_each_projection_has_finite_difference_gradient(self):
+    def test_each_projection_analytic_gradient_matches_finite_difference(self):
         epsilon = 1e-5
+        _, gradients = self.model.loss_and_gradients(self.batch)
         for tensor in ("query", "key", "value", "output"):
             original = self.model.parameter(tensor, 0, 0)
             self.model.set_parameter(tensor, 0, 0, original + epsilon)
@@ -20,8 +21,14 @@ class ProjectedAttentionReferenceTest(unittest.TestCase):
             self.model.set_parameter(tensor, 0, 0, original - epsilon)
             minus = self.model.loss(self.batch)
             self.model.set_parameter(tensor, 0, 0, original)
-            gradient = (plus - minus) / (2 * epsilon)
-            self.assertNotEqual(gradient, 0.0, tensor)
+            numerical = (plus - minus) / (2 * epsilon)
+            self.assertAlmostEqual(gradients[tensor][0][0], numerical, delta=1e-7, msg=tensor)
+
+    def test_training_projected_attention_reduces_masked_loss(self):
+        before = self.model.loss(self.batch)
+        for _ in range(100):
+            self.model.train_step(self.batch, 0.5)
+        self.assertLess(self.model.loss(self.batch), before)
 
     def test_future_tokens_do_not_change_masked_prefix_loss(self):
         baseline = self.model.loss(self.batch)
