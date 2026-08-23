@@ -19,6 +19,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 - A smallest dense causal CPU reference model with explicit embedding/output gradients. Centered finite differences validate representative embedding, output, and bias derivatives before optimization is relied on.
 - Dataset-backed dense-model training, deterministic dense checkpoints, a checksummed dense artifact, and a schema-compatible `experiment.json` record. `spaceslug tiny-dense-train BUNDLE CHECKPOINT ARTIFACT EXPERIMENT` produces all four, and accepts `--resume` for deterministic checkpoint continuation.
 - Bounded dense-training controls: `--gradient-clip` and `--memory-budget-bytes`. The memory planner rejects an over-budget plan before any update is applied.
+- Deterministic padded causal batches with explicit target-only masks for prompt/completion records, plus a dependency-free causal self-attention semantic reference that proves future tokens cannot affect prior outputs.
 
 ## Acceptance evidence
 
@@ -26,7 +27,7 @@ Create a small, reproducible CPU-reference Spaceslug-Tiny artifact and make a da
 PYTHONPATH=python python3 -m unittest -v tests.test_tokenizer_artifact tests.test_tiny_training
 ```
 
-The acceptance tests establish deterministic UTF-8 tokenization, artifact checksum rejection, loss reduction on fixed `.dts` fixtures, checkpoint save/load identity, equality between resumed and uninterrupted AdamW training, agreement between analytic dense-model gradients and centered finite differences, and a schema-compatible experiment record tied to the dataset revision.
+The acceptance tests establish deterministic UTF-8 tokenization, artifact checksum rejection, loss reduction on fixed `.dts` fixtures, checkpoint save/load identity, equality between resumed and uninterrupted AdamW training, agreement between analytic dense-model gradients and centered finite differences, a schema-compatible experiment record tied to the dataset revision, target-only loss masking that excludes prompt/PAD tokens, and strict causal attention semantics.
 
 ## Limitations
 
@@ -34,4 +35,4 @@ The original dataset CLI produces the CPU-reference bigram artifact. The dense C
 
 ## Next gate
 
-Add batched target-only loss masking and a dense attention-based causal block. Preserve the existing numerical-gradient, deterministic resume, artifact, experiment-record, and preflight acceptance evidence as the model architecture grows.
+Integrate the target-only batches and causal attention semantics into a trainable dense attention block with an independent numerical-gradient test. Preserve the existing deterministic resume, artifact, experiment-record, and preflight acceptance evidence as the model architecture grows.
