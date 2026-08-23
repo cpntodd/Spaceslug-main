@@ -39,6 +39,12 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             trainer.checkpoint(Path(root) / "step.json")
 
+    def test_run_steps_is_deterministically_counted(self):
+        backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
+        trainer = GpuLoRATrainer(backend, ProjectedTinyAttentionModel(259, 64), TinyLoRAAdapter())
+        reports = trainer.run_steps([([1, 7, 23], [2, 8, 24], [1, 1, 1]), ([1, 7, 23], [2, 8, 24], [1, 1, 1])])
+        self.assertEqual([report["step"] for report in reports], [1, 2])
+
     def test_device_resident_mode_is_explicitly_rejected(self):
         with self.assertRaises(ValueError):
             GpuLoRATrainer(None, None, None, GpuLoRATrainingState(device_resident=True))

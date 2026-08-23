@@ -59,5 +59,13 @@ class GpuLoRATrainer:
         self.state.step += 1
         return {"status": result.status, "loss": result.output["row_loss"], "step": self.state.step, "gpu_execution": result.metrics["gpu_execution"], "parity": result.metrics["parity"]}
 
+    def run_steps(self, batches: list[tuple[list[int], list[int], list[int]]]) -> list[dict[str, Any]]:
+        if not batches:
+            raise ValueError("at least one GPU LoRA batch is required")
+        reports = []
+        for tokens, targets, mask in batches:
+            reports.append(self.step(tokens, targets, mask))
+        return reports
+
     def checkpoint(self, path: str | Path) -> None:
         save_gpu_lora_checkpoint(path, self.state, self.adapter.state_dict())
