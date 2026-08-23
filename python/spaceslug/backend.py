@@ -157,7 +157,9 @@ class BackendSession:
         return result
 
     def execute_tiny_lora(self, x: list[float], a: list[float], b: list[float], rank: int = 4, learning_rate: float = 0.01) -> ExecutionResult:
-        return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA ABI is not yet available", "rank": rank, "learning_rate": learning_rate}, {"rows": len(x) // 64 if len(x) else 0})
+        if rank != 4 or len(x) % 64 or len(a) != 64 * rank or len(b) != rank * 64:
+            return ExecutionResult("not-run", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "LoRA MVP requires rank=4 and H=64", "rank": rank}, {"rows": len(x) // 64 if x else 0})
+        return ExecutionResult("not-run", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward ABI is not yet available", "rank": rank, "learning_rate": learning_rate}, {"rows": len(x) // 64})
 
     def execute_tiny_lora_plan(self, model: Any, rank: int = 4) -> ExecutionResult:
         return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward/backward/update kernels are not implemented", "rank": rank}, {"supported_base": model.hidden_size == 64 and model.vocab_size == 259})
