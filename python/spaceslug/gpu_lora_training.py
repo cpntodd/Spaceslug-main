@@ -34,3 +34,30 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 def gpu_lora_capability() -> dict[str, Any]:
     return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": False, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "boundary": "per-step GPU tensor orchestration with transient ABI buffers; no persistent device-resident loop"}
+
+
+class GpuLoRATrainer:
+    """Host-coordinated repeated GPU steps; deliberately not device-resident."""
+    def __init__(self, backend: Any, model: Any, adapter: Any, state: GpuLoRATrainingState | None = None) -> None:
+        self.backend, self.model, self.adapter = backend, model, adapter
+        self.state = state or GpuLoRATrainingState()
+        if self.state.device_resident:
+            raise ValueError("device-resident GPU LoRA trainer is not implemented")
+
+    def step(self, tokens: list[int], targets: list[int], mask: list[int]) -> dict[str, Any]:
+        result = self.backend.execute_tiny_lora_train_graph(tokens, targets, mask, self.model, self.adapter, self.state.learning_rate)
+        if result.status != "ok":
+            raise RuntimeError(result.metrics.get("reason", "GPU LoRA step failed"))
+        packed_a, packed_b = result.output["updated_a"], result.output["updated_b"]
+        names = ("query", "key", "value", "output")
+        for target, name in enumerate(names):
+            matrix = self.adapter.matrices[name]
+            start = target * 64 * matrix.rank
+            matrix.A = [packed_a[start + row * matrix.rank:start + (row + 1) * matrix.rank] for row in range(64)]
+            start = target * matrix.rank * 64
+            matrix.B = [packed_b[start + row * 64:start + (row + 1) * 64] for row in range(matrix.rank)]
+        self.state.step += 1
+        return {"status": result.status, "loss": result.output["row_loss"], "step": self.state.step, "gpu_execution": result.metrics["gpu_execution"], "parity": result.metrics["parity"]}
+
+    def checkpoint(self, path: str | Path) -> None:
+        save_gpu_lora_checkpoint(path, self.state, self.adapter.state_dict())

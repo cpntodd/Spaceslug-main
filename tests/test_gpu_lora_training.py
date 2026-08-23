@@ -1,7 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
-from spaceslug.gpu_lora_training import GpuLoRATrainingState, gpu_lora_capability, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
+from spaceslug.backend import BackendSession
+from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, gpu_lora_capability, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
+from spaceslug.lora import TinyLoRAAdapter
+from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
 class GpuLoraTrainingStateTest(unittest.TestCase):
     def test_checkpoint_round_trip(self):
@@ -14,6 +17,10 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertEqual(loaded.state_dict(), state.state_dict())
         self.assertEqual(loaded_adapter, adapter)
 
+    def test_only_sgd_schema_is_supported(self):
+        with self.assertRaises(ValueError):
+            GpuLoRATrainingState.from_state_dict({"schema_version": 1, "optimizer": "adam"})
+
     def test_capability_keeps_unimplemented_paths_explicit(self):
         capability = gpu_lora_capability()
         self.assertEqual(capability["base_weights"], "frozen")
@@ -21,8 +28,19 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertFalse(capability["adamw"])
         self.assertFalse(capability["dataset_training"])
 
-    def test_only_sgd_schema_is_supported(self):
+    def test_repeated_gpu_steps_update_adapter_and_checkpoint(self):
+        backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
+        trainer = GpuLoRATrainer(backend, ProjectedTinyAttentionModel(259, 64), TinyLoRAAdapter(), GpuLoRATrainingState(learning_rate=0.01))
+        first = trainer.step([1, 7, 23], [2, 8, 24], [1, 1, 1])
+        second = trainer.step([1, 7, 23], [2, 8, 24], [1, 1, 1])
+        self.assertEqual(first["step"], 1)
+        self.assertEqual(second["step"], 2)
+        self.assertTrue(first["gpu_execution"])
+        with tempfile.TemporaryDirectory() as root:
+            trainer.checkpoint(Path(root) / "step.json")
+
+    def test_device_resident_mode_is_explicitly_rejected(self):
         with self.assertRaises(ValueError):
-            GpuLoRATrainingState.from_state_dict({"schema_version": 1, "optimizer": "adam"})
+            GpuLoRATrainer(None, None, None, GpuLoRATrainingState(device_resident=True))
 
 if __name__ == "__main__": unittest.main()
