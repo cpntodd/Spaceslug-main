@@ -101,6 +101,23 @@ class BackendSession:
             raise BackendError(f"vector_add did not pass: {completed.stdout.strip()}")
         return ExecutionResult("ok", "vector_add", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"operation_count": 1, "host_elapsed_seconds": time.perf_counter() - started, "software_vulkan": self.software_vulkan, "execution": "validated-executable"}, {"runtime_report": completed.stdout.strip()})
 
+    def projected_attention_forward_plan(self, *, hidden_size: int, sequence_length: int, vocab_size: int) -> dict[str, Any]:
+        if hidden_size <= 0 or sequence_length <= 0 or vocab_size <= 0:
+            raise ValueError("projected attention dimensions must be positive")
+        return {
+            "operation": "tiny_projected_attention_forward",
+            "status": "planned-not-implemented",
+            "backend": "spaceslug",
+            "runtime_revision": self.runtime_revision,
+            "device": self.capabilities().device,
+            "cpu_reference": True,
+            "gpu_execution": False,
+            "steps": ["embedding_upload", "qkv_projection_sgemm", "causal_softmax", "output_projection_sgemm", "lm_head_sgemm"],
+            "dimensions": {"hidden_size": hidden_size, "sequence_length": sequence_length, "vocab_size": vocab_size},
+            "parity_gate": "CPU logits vs RADV logits",
+            "next_kernel": "qkv_projection_sgemm",
+        }
+
     def execute_sgemm_parity(self) -> ExecutionResult:
         """Run the validated fp32 GEMM parity executable as the first GPU gate."""
         if not self._library_path.is_file():
