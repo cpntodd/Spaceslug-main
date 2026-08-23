@@ -26,6 +26,9 @@ class TinyCliAcceptanceTest(unittest.TestCase):
             self.assertEqual(report["code_revision"], "acceptance-test")
             self.assertEqual(report["runtime_revision"], "not-used")
             self.assertEqual(report["command"], "spaceslug tiny-attention-train")
+            self.assertEqual(report["metrics"]["acceptance"]["reproducibility"], "pass")
+            self.assertEqual(report["metrics"]["acceptance"]["quality"], "not-established")
+            self.assertTrue(report["metrics"]["acceptance"]["ready_for_bounded_testing"])
 
 
 if __name__ == "__main__":

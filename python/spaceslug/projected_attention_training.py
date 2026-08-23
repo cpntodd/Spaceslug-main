@@ -15,6 +15,7 @@ from .projected_attention_artifact import write_projected_artifact
 from .projected_attention_experiment import write_projected_experiment
 from .projected_attention_inference import next_token
 from .quality_metrics import token_accuracy
+from .acceptance_status import classify_report
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,7 @@ def run_projected_training(
     metrics["artifact_revision"] = manifest["revision"]
     metrics["checkpoint_identity"] = {"path": str(checkpoint), "schema_version": 2}
     metrics["inference"] = {"prompt": "Q: ", "next_token": next_token(model, tokenizer, "Q: ")}
+    metrics["acceptance"] = classify_report(metrics)
     experiment_path = write_projected_experiment(experiment, Path(experiment).name, metrics, code_revision=code_revision, command="spaceslug tiny-attention-train")
     return {"metrics": metrics, "artifact_revision": manifest["revision"], "experiment": str(experiment_path)}
 
