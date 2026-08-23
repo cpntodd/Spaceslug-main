@@ -11,7 +11,11 @@ class BackendGpuGateTest(unittest.TestCase):
         self.assertFalse(result["tiny_gpu_inference"])
         self.assertFalse(result["tiny_gpu_training"])
         self.assertTrue(result["cpu_gate_required"])
-        self.assertEqual(result["next_operation"], "tensor_gemm_parity")
+        self.assertEqual(result["next_operation"], "tiny_projected_attention_forward")
+        self.assertTrue(result["gemm_parity_available"])
+        parity = session.execute_sgemm_parity()
+        self.assertEqual(parity.operation, "sgemm")
+        self.assertEqual(parity.metrics["parity"], "cpu-reference")
 
 
 if __name__ == "__main__":

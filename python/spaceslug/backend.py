@@ -101,6 +101,19 @@ class BackendSession:
             raise BackendError(f"vector_add did not pass: {completed.stdout.strip()}")
         return ExecutionResult("ok", "vector_add", "spaceslug", self.runtime_revision, self.capabilities().device, False, {"operation_count": 1, "host_elapsed_seconds": time.perf_counter() - started, "software_vulkan": self.software_vulkan, "execution": "validated-executable"}, {"runtime_report": completed.stdout.strip()})
 
+    def execute_sgemm_parity(self) -> ExecutionResult:
+        """Run the validated fp32 GEMM parity executable as the first GPU gate."""
+        if not self._library_path.is_file():
+            raise BackendError("native runtime library is missing; build vulkan-runtime first")
+        started = time.perf_counter()
+        completed = self._run("sgemm")
+        output = completed.stdout.strip()
+        if "PASS" not in output:
+            raise BackendError(f"sgemm parity did not pass: {output}")
+        return ExecutionResult("ok", "sgemm", "spaceslug", self.runtime_revision, self.capabilities().device, False,
+                               {"execution": "validated-executable", "parity": "cpu-reference", "host_elapsed_seconds": time.perf_counter() - started},
+                               {"runtime_report": output})
+
     def verify_tiny_gpu_prerequisites(self) -> dict[str, Any]:
         """Report the currently available Vulkan gate without claiming Tiny GPU training."""
         capabilities = self.capabilities()
@@ -112,7 +125,8 @@ class BackendSession:
             "tiny_gpu_inference": False,
             "tiny_gpu_training": False,
             "validated_operations": list(capabilities.operations),
-            "next_operation": "tensor_gemm_parity",
+            "next_operation": "tiny_projected_attention_forward",
+            "gemm_parity_available": self._library_path.is_file(),
             "cpu_gate_required": True,
         }
 
