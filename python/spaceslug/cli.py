@@ -37,6 +37,7 @@ def main() -> int:
     attention_gate = subparsers.add_parser("tiny-attention-gate")
     attention_gate.add_argument("--tokens", type=int, default=128)
     attention_gate.add_argument("--hidden-size", type=int, default=64)
+    attention_gate.add_argument("--software-vulkan", action="store_true")
     verify = subparsers.add_parser("dataset-verify")
     verify.add_argument("bundle", type=Path)
     train = subparsers.add_parser("tiny-train")
@@ -82,7 +83,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "tiny-attention-gate":
         import json
-        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime", software_vulkan=args.software_vulkan), ProjectedTinyAttentionModel(259))
         values = [1.0] * (args.tokens * args.hidden_size)
         print(json.dumps(session.run_attention_gate(values, values, values, args.tokens, args.hidden_size), sort_keys=True))
         return 0

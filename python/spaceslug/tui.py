@@ -89,9 +89,9 @@ class SpaceslugTui:
         self.state.status = "CPU gate passed" if result.passed else "CPU gate failed"
         return result.__dict__
 
-    def run_attention_gate(self, *, tokens: int = 128, hidden_size: int = 64) -> dict:
+    def run_attention_gate(self, *, tokens: int = 128, hidden_size: int = 64, software_vulkan: bool = False) -> dict:
         from .backend import BackendSession
-        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime", software_vulkan=software_vulkan), ProjectedTinyAttentionModel(259))
         values = [1.0] * (tokens * hidden_size)
         report = session.run_attention_gate(values, values, values, tokens, hidden_size)
         self.state.backend = report["backend"]
