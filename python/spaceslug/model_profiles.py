@@ -15,6 +15,7 @@ class ModelProfile:
     context_length: int
     training_mode: str = "full"
     dtype: str = "float32"
+    lora_rank: int = 0
 
     @property
     def estimated_parameters(self) -> int:
@@ -37,7 +38,7 @@ class ModelProfile:
 
 
 _PROFILES = {
-    "Spaceslug-Tiny": ModelProfile("Spaceslug-Tiny", 1_000_000, 64, 2, 4, 512),
+    "Spaceslug-Tiny": ModelProfile("Spaceslug-Tiny", 1_000_000, 64, 2, 4, 512, "lora", "float32", 4),
     "Spaceslug-0.1B": ModelProfile("Spaceslug-0.1B", 100_000_000, 768, 12, 12, 2048),
     "Spaceslug-0.5B": ModelProfile("Spaceslug-0.5B", 500_000_000, 1024, 16, 16, 2048, "lora"),
     "Spaceslug-1B": ModelProfile("Spaceslug-1B", 1_000_000_000, 2048, 16, 16, 4096, "lora"),

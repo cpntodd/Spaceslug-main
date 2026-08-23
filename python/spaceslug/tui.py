@@ -98,6 +98,13 @@ class SpaceslugTui:
         self.state.status = f"attention gate: {report['status']}"
         return report
 
+    def run_lora_plan(self, rank: int = 4) -> dict:
+        from .backend import BackendSession
+        session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(259))
+        report = session.run_lora_plan(rank)
+        self.state.status = f"GPU LoRA: {report['status']}"
+        return report
+
     def run_gpu_chain_plan(self, tokens: list[int], *, vocab_size: int = 259) -> dict:
         from .backend import BackendSession
         session = InferenceSession(BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime"), ProjectedTinyAttentionModel(vocab_size))

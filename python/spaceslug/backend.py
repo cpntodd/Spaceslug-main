@@ -156,9 +156,62 @@ class BackendSession:
             result.metrics["parity"] = "cpu-projection-output"
         return result
 
+    def execute_tiny_lora_plan(self, model: Any, rank: int = 4) -> ExecutionResult:
+        return ExecutionResult("not-run", "tiny_lora_forward_backward_update", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "GPU LoRA forward/backward/update kernels are not implemented", "rank": rank}, {"supported_base": model.hidden_size == 64 and model.vocab_size == 259})
+
     def execute_projected_attention_forward(self, tokens: list[int], model: Any) -> ExecutionResult:
-        """CPU-authoritative dispatcher; full Tiny GPU composition is capability-gated."""
+        """Use the complete GPU chain only for the validated Tiny shape."""
+        if model.hidden_size == 64 and model.vocab_size == 259 and 0 < len(tokens) <= 128 and hasattr(self._native(), "spaceslug_attention_causal"):
+            return self._execute_tiny_gpu_forward(tokens, model)
         return self.execute_projected_attention_cpu_fallback(tokens, model)
+
+    def _native_sgemm_values(self, a: list[float], b: list[float], m: int, n: int, k: int) -> list[float]:
+        import array, ctypes, os
+        aa, bb, cc = (array.array("f", values) for values in (a, b, [0.0] * (m * n)))
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan:
+            os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_sgemm((ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), (ctypes.c_float * len(cc)).from_buffer(cc), m, n, k, ctypes.byref(ctypes.c_float()))
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0:
+            raise BackendError(f"native sgemm returned {code}")
+        return cc.tolist()
+
+    def _execute_tiny_gpu_forward(self, tokens: list[int], model: Any) -> ExecutionResult:
+        import array, ctypes, os
+        from .positional_encoding import sinusoidal_positions
+        t, h, vp = len(tokens), model.hidden_size, 320
+        states = [model.embedding[token][:] for token in tokens]
+        if model.use_positions:
+            positions = sinusoidal_positions(t, h)
+            states = [[value + positions[row][column] for column, value in enumerate(state)] for row, state in enumerate(states)]
+        states += [[0.0] * h for _ in range(128 - t)]
+        def mat(matrix):
+            return [matrix[row][column] for row in range(h) for column in range(h)]
+        self._native()
+        q = self._native_sgemm_values([x for row in states for x in row], mat(model.query), 128, 64, 64)
+        k = self._native_sgemm_values([x for row in states for x in row], mat(model.key), 128, 64, 64)
+        v = self._native_sgemm_values([x for row in states for x in row], mat(model.value), 128, 64, 64)
+        qv, kv, vv = (array.array("f", x) for x in (q, k, v))
+        out = (ctypes.c_float * (128 * 64))()
+        old_icd = os.environ.get("VK_ICD_FILENAMES")
+        if self.software_vulkan: os.environ["VK_ICD_FILENAMES"] = "/usr/share/vulkan/icd.d/lvp_icd.json"
+        try:
+            code = self._library.spaceslug_attention_causal((ctypes.c_float * len(qv)).from_buffer(qv), (ctypes.c_float * len(kv)).from_buffer(kv), (ctypes.c_float * len(vv)).from_buffer(vv), out, t, h)
+        finally:
+            if old_icd is None: os.environ.pop("VK_ICD_FILENAMES", None)
+            else: os.environ["VK_ICD_FILENAMES"] = old_icd
+        if code != 0: raise BackendError(f"native causal attention returned {code}")
+        context = list(out)
+        projected = self._native_sgemm_values(context, mat(model.output), 128, 64, 64)
+        lm = [[model.lm_head[row][column] if column < model.vocab_size else 0.0 for column in range(vp)] for row in range(h)]
+        logits_all = self._native_sgemm_values(projected, [x for row in lm for x in row], 128, vp, h)
+        logits = logits_all[(t - 1) * vp:t * vp][:model.vocab_size]
+        parity = compare_float_arrays(logits, model.logits_for_tokens(tokens))
+        return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_projected_attention_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-reference", "gpu_execution": parity["status"] == "pass", "padded_tokens": 128, "padded_vocab": vp, **parity}, {"logits": logits, "token_count": t})
 
     def execute_projected_attention_gpu_plan(self, tokens: list[int], model: Any) -> ExecutionResult:
         plan = self.projected_attention_forward_plan(hidden_size=model.hidden_size, sequence_length=len(tokens), vocab_size=model.vocab_size)

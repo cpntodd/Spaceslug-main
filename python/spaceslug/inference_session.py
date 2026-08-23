@@ -23,6 +23,10 @@ class InferenceSession:
         result = self.backend.execute_attention_kernel_parity(q, k, v, tokens, hidden_size)
         return {"operation": result.operation, "backend": result.backend, "status": result.status, "parity": result.metrics.get("parity"), "runtime_revision": result.runtime_revision, "device": result.device, "report": result.output}
 
+    def run_lora_plan(self, rank: int = 4) -> dict:
+        result = self.backend.execute_tiny_lora_plan(self.model, rank)
+        return {"operation": result.operation, "status": result.status, "backend": result.backend, "parity": result.metrics.get("parity"), "reason": result.metrics.get("reason"), "rank": result.metrics.get("rank"), "runtime_revision": result.runtime_revision, "device": result.device, "gpu_execution": False}
+
     def run_gpu_chain_plan(self, tokens: list[int]) -> dict:
         result = self.backend.execute_tiny_attention_kernel_chain(tokens, self.model)
         return {"operation": result.operation, "backend": result.backend, "status": result.status, "parity": result.metrics.get("parity"), "reason": result.metrics.get("reason"), "steps": result.metrics.get("steps", []), "runtime_revision": result.runtime_revision, "device": result.device, "gpu_execution": result.status == "ok"}
