@@ -84,6 +84,12 @@ class BackendSession:
             operations.append("sgemm")
         if (self.build_dir / "attention").is_file():
             operations.append("attention_kernel")
+        if self._library_path.is_file():
+            try:
+                if hasattr(self._native(), "spaceslug_attention_causal"):
+                    operations.append("attention_causal_abi")
+            except BackendError:
+                pass
         return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None)
 
     def execute_vector_add(self, left: list[float] | None = None, right: list[float] | None = None) -> ExecutionResult:
@@ -156,7 +162,11 @@ class BackendSession:
 
     def execute_projected_attention_gpu_plan(self, tokens: list[int], model: Any) -> ExecutionResult:
         plan = self.projected_attention_forward_plan(hidden_size=model.hidden_size, sequence_length=len(tokens), vocab_size=model.vocab_size)
-        return ExecutionResult("not-run", plan["operation"], "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "causal attention ABI and padded projection orchestration are not implemented", "steps": plan["steps"]}, {"plan": plan})
+        if not hasattr(self._native(), "spaceslug_attention_causal"):
+            reason = "causal attention ABI is unavailable"
+        else:
+            reason = "padded QKV, output projection, and LM-head orchestration are not implemented"
+        return ExecutionResult("not-run", plan["operation"], "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": reason, "steps": plan["steps"]}, {"plan": plan})
 
     def execute_attention_kernel_parity(self, q: list[float], k: list[float], v: list[float], tokens: int, hidden_size: int) -> ExecutionResult:
         if tokens <= 0 or hidden_size != 64 or tokens % 32:

@@ -13,6 +13,7 @@ class BackendGpuGateTest(unittest.TestCase):
         self.assertTrue(result["cpu_gate_required"])
         self.assertIn("sgemm", result["validated_operations"])
         self.assertIn("attention_kernel", result["validated_operations"])
+        self.assertIn("attention_causal_abi", result["validated_operations"])
         self.assertEqual(result["next_operation"], "tiny_projected_attention_forward")
         self.assertTrue(result["gemm_parity_available"])
         from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
