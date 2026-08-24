@@ -98,27 +98,28 @@ class BackendSession:
                     tiny_forward.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
                     tiny_forward.restype = ctypes.c_int
                     tiny_destroy = self._library.spaceslug_tiny_forward_destroy
-                    tiny_destroy.argtypes = [ctypes.c_void_p]
-                     if hasattr(self._library, "spaceslug_tiny_forward_create_full"):
-                         create_full = self._library.spaceslug_tiny_forward_create_full
-                         create_full.argtypes = [ctypes.POINTER(ctypes.c_float)] * 7
-                         create_full.restype = ctypes.c_void_p
-                         begin_accumulation = self._library.spaceslug_tiny_forward_begin_lora_accumulation
-                         begin_accumulation.argtypes = [ctypes.c_void_p]
-                         begin_accumulation.restype = ctypes.c_int
-                         token_backward_accumulate = self._library.spaceslug_tiny_forward_token_step_training_backward_accumulate
-                         token_backward_accumulate.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32] + [ctypes.POINTER(ctypes.c_float)] * 9
-                         token_backward_accumulate.restype = ctypes.c_int
-                         finalize_sgd = self._library.spaceslug_tiny_forward_finalize_lora_sgd
-                         finalize_sgd.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float]
-                         finalize_sgd.restype = ctypes.c_int
-                         readback_adapters = self._library.spaceslug_tiny_forward_readback_lora_adapters
-                         readback_adapters.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 8
-                         readback_adapters.restype = ctypes.c_int
-                         update_adapters = self._library.spaceslug_tiny_forward_update_lora_adapters
-                         update_adapters.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 8
-                         update_adapters.restype = ctypes.c_int
+                                        tiny_destroy.argtypes = [ctypes.c_void_p]
+                    if hasattr(self._library, "spaceslug_tiny_forward_create_full"):
+                        create_full = self._library.spaceslug_tiny_forward_create_full
+                        create_full.argtypes = [ctypes.POINTER(ctypes.c_float)] * 7
+                        create_full.restype = ctypes.c_void_p
+                        begin_accumulation = self._library.spaceslug_tiny_forward_begin_lora_accumulation
+                        begin_accumulation.argtypes = [ctypes.c_void_p]
+                        begin_accumulation.restype = ctypes.c_int
+                        token_backward_accumulate = self._library.spaceslug_tiny_forward_token_step_training_backward_accumulate
+                        token_backward_accumulate.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32] + [ctypes.POINTER(ctypes.c_float)] * 9
+                        token_backward_accumulate.restype = ctypes.c_int
+                        finalize_sgd = self._library.spaceslug_tiny_forward_finalize_lora_sgd
+                        finalize_sgd.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float]
+                        finalize_sgd.restype = ctypes.c_int
+                        readback_adapters = self._library.spaceslug_tiny_forward_readback_lora_adapters
+                        readback_adapters.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 8
+                        readback_adapters.restype = ctypes.c_int
+                        update_adapters = self._library.spaceslug_tiny_forward_update_lora_adapters
+                        update_adapters.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 8
+                        update_adapters.restype = ctypes.c_int
                     tiny_destroy.restype = None
+                        
                 if hasattr(self._library, "spaceslug_lora_session_token_step"):
                     token_step = self._library.spaceslug_lora_session_token_step
                     token_step.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
