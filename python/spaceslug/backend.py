@@ -277,9 +277,11 @@ class BackendSession:
                     dataset_batch_capability = native.vulkan_runtime_dataset_batch_capability().decode("utf-8")
             except (BackendError, AttributeError):
                 pass
+        from .native_training import native_fp32_lm_head_capability
         metadata = {"tiny_forward_fixed_retained": native_retained,
                     "tiny_forward_loss_fixed_retained": native_retained_loss,
                     "tiny_training_production": native_training,
+                    "native_fp32_lm_head_only_base_training": native_fp32_lm_head_capability(),
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,

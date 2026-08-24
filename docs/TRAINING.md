@@ -68,6 +68,12 @@ For the same tiny model and batch, CPU and Vulkan must agree on:
 
 Tolerances must be defined per dtype and reduction order. Exact token identity is not a sufficient training metric.
 
+## Native FP32 LM-head-only base-training boundary
+
+The repository now exposes explicit metadata and a training-plan boundary for a future native FP32 LM-head-only path via `native_fp32_lm_head_capability()` and `native_fp32_lm_head_training_plan()`. The intended trainable group is only `lm_head`; the backbone groups (embeddings, attention QKV/output, feed-forward, normalization, and positional embeddings) remain unsupported for native base training.
+
+This is **planned-not-implemented** metadata, not a native binding or a training result. The current ctypes ABI has no LM-head-only forward/backward/update entry point, so `native_binding` is false, dataset training is false, and CPU remains authoritative. The plan must not be interpreted as full-base training: `full_base_training` is false and full-base backward/update are explicitly listed as unsupported. Tests assert these boundaries.
+
 ## Spaceslug-0.5B policy
 
 The dedicated 0.5B model is an MVP deployment target. Its initial pretraining may be external or staged/offloaded. The RX580 MVP requirement is quantized inference and practical LoRA adaptation, not a claim that frontier-quality 0.5B pretraining is fast locally.

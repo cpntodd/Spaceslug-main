@@ -9,6 +9,7 @@ from .tiny_artifact import load_tiny_artifact, write_tiny_artifact
 from .tokenizer import ByteTokenizer, default_tokenizer
 from .reference import vector_add
 from .gpu_lora_training import PersistentTinyTrainer, persistent_tiny_capability
+from .native_training import native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
 
 __all__ = [
     "BackendCapabilities", "BackendError", "BackendSession", "ExecutionResult",
@@ -16,4 +17,5 @@ __all__ = [
     "TinyDenseCausalModel", "TinyTrainingConfig", "train_tiny", "save_training_checkpoint",
     "load_training_checkpoint", "write_tiny_artifact", "load_tiny_artifact", "ByteTokenizer",
     "default_tokenizer", "vector_add", "PersistentTinyTrainer", "persistent_tiny_capability",
+    "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan",
 ]
