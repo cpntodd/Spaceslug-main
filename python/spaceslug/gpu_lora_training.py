@@ -33,7 +33,7 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": True, "fixed_shape_retained_command_buffer_resubmit": True, "reusable_exec_submission": True, "fp16_storage": True, "fp16_arithmetic": False, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": True, "fixed_shape_retained_command_buffer_resubmit": True, "reusable_exec_submission": True, "fp16_storage": True, "fp16_arithmetic": False, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 or rank=8 profiles; Python orchestration remains bounded"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
@@ -41,7 +41,7 @@ def gpu_lora_training_plan() -> dict[str, Any]:
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "rank": 4, "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
 
 
 class PersistentGpuLoRATrainer:
@@ -83,8 +83,8 @@ class PersistentTinyTrainer:
     persistent graph retains model/adapter state only; it never owns the dataset.
     """
     def __init__(self, backend: Any, model: Any, adapter: Any, learning_rate: float = 0.01, optimizer: str = "sgd", weight_decay: float = 0.0) -> None:
-        if (model.hidden_size, model.vocab_size, adapter.hidden_size, adapter.rank) != (64, 259, 64, 4):
-            raise ValueError("PersistentTiny supports only H=64, V=259, rank=4")
+        if (model.hidden_size, model.vocab_size, adapter.hidden_size) != (64, 259, 64) or adapter.rank not in {4, 8}:
+            raise ValueError("PersistentTiny supports only H=64, V=259, rank=4 or rank=8")
         if optimizer not in {"sgd", "adamw"} or weight_decay < 0.0:
             raise ValueError("optimizer must be sgd or adamw and weight_decay must not be negative")
         self.backend, self.model, self.adapter = backend, model, adapter
@@ -146,7 +146,7 @@ class PersistentTinyTrainer:
                 "window_position": self.window_position, "gpu_execution": True,
                 "device_resident": True, "dataset_device_resident": False,
                 "host_staging": True, "optimizer": "sgd",
-                "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+                "contract": {"hidden": 64, "vocab": 259, "rank": self.adapter.rank}}
 
     def checkpoint(self, path: str | Path) -> None:
         """Save adapter and resumable stream metadata; dataset remains host-owned."""
@@ -196,7 +196,7 @@ class PersistentTinyTrainer:
         else:
             finalize(self.handle, self.learning_rate, float(sum(mask) or 1))
         self.step_index += 1
-        return {"status": "ok", "step": self.step_index, "loss": losses, "gpu_execution": True, "device_resident": True, "optimizer": optimizer, "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+        return {"status": "ok", "step": self.step_index, "loss": losses, "gpu_execution": True, "device_resident": True, "optimizer": optimizer, "contract": {"hidden": 64, "vocab": 259, "rank": self.adapter.rank}}
 
     def train_tokens(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
         return self._train_tokens(tokens, targets, mask, self.optimizer)
