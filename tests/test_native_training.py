@@ -168,6 +168,20 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(state["step"], 7)
         self.assertEqual(calls[-1], ("update", 7))
 
+    def test_mocked_bounded_scalar_metrics_binding(self):
+        session = BackendSession("/tmp/runtime", "test")
+        session._device = "mock-device"
+        class Native:
+            def spaceslug_tiny_forward_loss_fixed_metrics(self, handle, tokens, targets, masks, loss, count):
+                loss._obj.value = 1.25
+                count._obj.value = 3
+                return 0
+        session._native = lambda: Native()
+        result = session.execute_tiny_fixed_loss_metrics(123, [1] * 128, [2] * 128, [1] * 128)
+        self.assertEqual(result.output, {"loss": 1.25, "count": 3})
+        with self.assertRaises(ValueError):
+            session.execute_tiny_fixed_loss_metrics(123, [1], [2], [1])
+
     def test_runtime_graph_owned_lm_head_boundary_is_metadata_only(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
