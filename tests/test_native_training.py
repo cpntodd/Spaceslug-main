@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from spaceslug.backend import BackendSession
-from spaceslug.native_training import native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
+from spaceslug.native_training import integrated_tiny_lm_head_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
 
 
 class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
@@ -35,6 +35,15 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertIn("native_full_base_backward", plan["unsupported_steps"])
         self.assertFalse(plan["full_base_training"])
 
+    def test_integrated_contract_is_distinct_and_adamw_is_minus_four(self):
+        capability = integrated_tiny_lm_head_capability(available=True, runtime_capability="mock-runtime")
+        self.assertTrue(capability["integrated_graph_sgd"])
+        self.assertTrue(capability["graph_owned_lm_head"])
+        self.assertFalse(capability["standalone_api"])
+        self.assertEqual(capability["optimizer"], "sgd")
+        self.assertFalse(capability["adamw"])
+        self.assertEqual(capability["adamw_return_code"], -4)
+
     def test_backend_exposes_same_metadata_without_native_claim(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
@@ -46,6 +55,25 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(capability["trainable_parameter_groups"], ["lm_head", "output_projection", "combined_qkv"])
         self.assertFalse(capability["full_base_training"])
 
+    def test_backend_reports_conditional_integrated_sgd_and_adamw_boundary(self):
+        runtime = Path(__file__).parents[2] / "vulkan-runtime"
+        metadata = BackendSession(runtime, "test").capabilities().metadata
+        integrated = metadata["tiny_graph_integrated_lm_head_sgd"]
+        self.assertTrue(integrated["integrated_graph_sgd"])
+        self.assertFalse(integrated["standalone_api"])
+        self.assertEqual(metadata["tiny_graph_integrated_lm_head_adamw"]["return_code"], -4)
+
+    def test_mocked_ctypes_trainer_binds_integrated_sgd(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_train_lm_head_sgd(self, handle, tokens, targets, masks, rows, rate):
+                calls.append((handle, list(tokens), list(targets), list(masks), rows, rate))
+                return 0
+        session._native = lambda: Native()
+        session.train_tiny_graph_lm_head_sgd(123, [1, 2], [3, 4], [1, 1], 0.25)
+        self.assertEqual(calls, [(123, [1, 2], [3, 4], [1, 1], 2, 0.25)])
+
     def test_runtime_graph_owned_lm_head_boundary_is_metadata_only(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
@@ -56,7 +84,7 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_return_code"], -4 if metadata["tiny_graph_base_train_lm_head"] else None)
         if metadata["tiny_graph_base_train_lm_head"]:
             self.assertTrue(metadata["tiny_graph_base_train_lm_head_group_supported"])
-            self.assertIn("lm_head_owned_fp32_import_readback", metadata["tiny_graph_base_train_lm_head_capability"])
+            self.assertIn("base_train_group_lm_head_owned_fp32_fixed_window_sgd", metadata["tiny_graph_base_train_lm_head_capability"])
         else:
             self.assertIsNone(metadata["tiny_graph_base_train_lm_head_capability"])
 

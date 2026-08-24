@@ -28,6 +28,9 @@ This revision contains validated runtime targets including `vector_add`, `sgemm`
 | Runtime baseline at `a195bc6` | **Validated** | Build and 25/25 CTest pass on RADV and lavapipe. |
 | Host `vector_add` native API path | **Validated** | Python acceptance test loads the runtime shared library, verifies returned output against the CPU reference, and passes on RADV and lavapipe. |
 | Other host backend operations | **Proposed** | No host API or parity acceptance claim yet. |
+| Graph-owned Tiny LM-head SGD | **Conditional** | ctypes/trainer binds `spaceslug_tiny_forward_train_lm_head_sgd` only when exported; graph-owned activations and LM-head, fixed 1..128 token window. |
+| Graph-owned Tiny LM-head AdamW | **Unsupported (-4)** | AdamW is not part of the integrated graph base-training contract, even if an unrelated symbol is present. |
+| Standalone FP32 training subsets | **Separate bounded API** | Caller-supplied activation/gradient tensors; never report as graph-integrated training. |
 | Performance | **Not claimed** | Smoke timing is diagnostic only; no benchmark acceptance result is recorded. |
 
 A later runtime change requires a new immutable pin and a repeat of the applicable acceptance gates.

@@ -1,10 +1,9 @@
-"""Capability metadata for the native standalone FP32 base-training subsets.
+"""Native training contracts and the optional graph-owned Tiny LM-head trainer.
 
-The runtime exposes three deliberately narrow FP32 gradient/SGD ABIs: LM-head,
-output projection, and combined QKV projection training.  Each consumes
-caller-supplied activations and upstream gradients; none is wired into the
-Tiny forward graph or dataset training, and together they are not full base
-training.
+The standalone FP32 APIs consume caller-supplied tensors.  The integrated Tiny
+API instead owns activations and the LM-head inside a persistent forward graph;
+it is exposed only when its runtime symbols are present.  The two contracts are
+intentionally reported separately.
 """
 
 from __future__ import annotations
@@ -60,6 +59,30 @@ def native_fp32_lm_head_capability() -> dict[str, Any]:
     }
 
 
+def integrated_tiny_lm_head_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
+    """Return the graph-owned Tiny LM-head SGD contract.
+
+    ``available`` is supplied by the ctypes symbol probe; this function never
+    claims integrated support merely because the standalone API exists.
+    """
+    return {
+        "operation": "tiny_graph_owned_lm_head_sgd",
+        "status": "available" if available else "unsupported",
+        "native_binding": available,
+        "integrated_graph_sgd": True,
+        "graph_owned_lm_head": True,
+        "standalone_api": False,
+        "activation_source": "graph-owned-forward-activations",
+        "optimizer": "sgd",
+        "adamw": False,
+        "adamw_return_code": -4,
+        "trainable_parameter_groups": ["lm_head"],
+        "dataset_integration": False,
+        "contract": "persistent Tiny forward graph owns activations and LM-head; fixed-window token/target/mask SGD",
+        "runtime_capability": runtime_capability,
+    }
+
+
 def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> dict[str, Any]:
     """Describe the standalone LM-head-only execution contract."""
     if hidden_size <= 0 or vocab_size <= 0:
@@ -81,4 +104,4 @@ def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> d
     }
 
 
-__all__ = ["native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
+__all__ = ["integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]

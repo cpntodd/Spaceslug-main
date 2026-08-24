@@ -301,12 +301,13 @@ class BackendSession:
                     dataset_batch_capability = native.vulkan_runtime_dataset_batch_capability().decode("utf-8")
             except (BackendError, AttributeError):
                 pass
-        from .native_training import native_fp32_lm_head_capability
+        from .native_training import integrated_tiny_lm_head_capability, native_fp32_lm_head_capability
         native_fp32_base_training = native_fp32_lm_head_capability()
         graph_lm_head = False
         graph_lm_head_capability = None
         graph_lm_head_group_supported = False
         graph_lm_head_training_methods = False
+        graph_lm_head_adamw = False
         if self._library_path.is_file():
             try:
                 native = self._native()
@@ -316,10 +317,8 @@ class BackendSession:
                     "spaceslug_tiny_forward_import_base_train_lm_head",
                     "spaceslug_tiny_forward_readback_base_train_lm_head",
                 ))
-                graph_lm_head_training_methods = all(hasattr(native, name) for name in (
-                    "spaceslug_tiny_forward_train_lm_head_sgd",
-                    "spaceslug_tiny_forward_train_lm_head_adamw",
-                ))
+                graph_lm_head_training_methods = hasattr(native, "spaceslug_tiny_forward_train_lm_head_sgd")
+                graph_lm_head_adamw = hasattr(native, "spaceslug_tiny_forward_train_lm_head_adamw")
                 if graph_lm_head:
                     graph_lm_head_capability = native.spaceslug_tiny_forward_base_train_capability().decode("utf-8")
                     graph_lm_head_group_supported = bool(native.spaceslug_tiny_forward_base_train_group_supported(1))
@@ -336,6 +335,8 @@ class BackendSession:
                      "tiny_graph_base_train_lm_head_training_methods": graph_lm_head_training_methods,
                      "tiny_graph_base_train_lm_head_training": False,
                      "tiny_graph_base_train_lm_head_training_return_code": -4 if graph_lm_head_training_methods else None,
+                     "tiny_graph_integrated_lm_head_sgd": integrated_tiny_lm_head_capability(available=graph_lm_head_training_methods, runtime_capability=graph_lm_head_capability),
+                     "tiny_graph_integrated_lm_head_adamw": {"supported": False, "return_code": -4, "symbol_present": graph_lm_head_adamw},
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
@@ -706,6 +707,26 @@ class BackendSession:
         self._tiny_arrays = getattr(self, "_tiny_arrays", {})
         self._tiny_arrays[int(handle)] = arrays
         return ctypes.c_void_p(handle)
+
+    def train_tiny_graph_lm_head_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
+        """Run one graph-owned Tiny LM-head SGD step when the runtime exports it."""
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError("integrated Tiny LM-head SGD requires equal 1..128 token/target/mask values")
+        if learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_lm_head_sgd", None)
+        if fn is None:
+            raise BackendError("integrated graph LM-head SGD ABI unavailable")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, len(tokens), learning_rate)
+        if code != 0:
+            raise BackendError(f"integrated graph LM-head SGD returned {code}")
+
+    def train_tiny_graph_lm_head_adamw(self, *args: Any, **kwargs: Any) -> None:
+        """AdamW is deliberately unsupported for integrated graph base training."""
+        raise BackendError("integrated graph LM-head AdamW unsupported (return code -4)")
 
     def begin_tiny_accumulation(self, handle: ctypes.c_void_p) -> None:
         code = self._native().spaceslug_tiny_forward_begin_lora_accumulation(handle)
