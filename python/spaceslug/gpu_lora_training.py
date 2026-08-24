@@ -55,6 +55,13 @@ class PersistentGpuLoRATrainer:
         self.a, self.b = self.backend.readback_lora_session(self.handle, self.rank)
         save_gpu_lora_checkpoint(path, GpuLoRATrainingState(step=self.step_index, learning_rate=self.learning_rate, device_resident=True), {"rank": self.rank, "a": self.a, "b": self.b})
 
+    @classmethod
+    def resume(cls, backend: Any, path: str | Path, rows: int) -> "PersistentGpuLoRATrainer":
+        state, adapter = load_gpu_lora_checkpoint(path)
+        if not state.device_resident or "a" not in adapter or "b" not in adapter:
+            raise ValueError("checkpoint is not a persistent GPU LoRA checkpoint")
+        return cls(backend, adapter["a"], adapter["b"], int(adapter["rank"]), state.learning_rate, rows, state.step)
+
     def close(self) -> None:
         if self.handle is not None:
             self.backend.close_lora_session(self.handle)

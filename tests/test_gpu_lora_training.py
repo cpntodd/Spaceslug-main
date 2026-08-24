@@ -31,6 +31,13 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertTrue(report["gpu_execution"])
         self.assertTrue(report["device_resident"])
         self.assertEqual(report["parity"], "persistent-session")
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint = Path(root) / "persistent.json"
+            trainer.checkpoint(checkpoint)
+            resumed = PersistentGpuLoRATrainer.resume(backend, checkpoint, rows)
+            resumed_report = resumed.step([0.03] * (rows * 64), [0.04] * (rows * 64))
+            self.assertEqual(resumed_report["step"], 3)
+            resumed.close()
 
     def test_capability_keeps_unimplemented_paths_explicit(self):
         capability = gpu_lora_capability()
