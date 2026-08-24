@@ -54,6 +54,8 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertTrue(capability["persistent_command_buffer"])
         self.assertTrue(capability["fixed_shape_retained_command_buffer_resubmit"])
         self.assertTrue(capability["reusable_exec_submission"])
+        self.assertTrue(capability["fp16_storage"])
+        self.assertFalse(capability["fp16_arithmetic"])
         self.assertTrue(capability["gradient_accumulation"])
         self.assertFalse(capability["adamw"])
         self.assertFalse(capability["native_adamw"])
