@@ -8,8 +8,10 @@ from spaceslug.native_training import native_fp32_lm_head_capability, native_fp3
 class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
     def test_capability_is_lm_head_only_and_does_not_claim_full_base(self):
         capability = native_fp32_lm_head_capability()
-        self.assertEqual(capability["status"], "planned-not-implemented")
-        self.assertFalse(capability["native_binding"])
+        self.assertEqual(capability["status"], "implemented-standalone")
+        self.assertTrue(capability["native_binding"])
+        self.assertFalse(capability["forward_integration"])
+        self.assertFalse(capability["dataset_integration"])
         self.assertEqual(capability["dtype"], "fp32")
         self.assertEqual(capability["trainable_parameter_groups"], ["lm_head"])
         self.assertFalse(capability["full_base_training"])
@@ -21,6 +23,7 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         plan = native_fp32_lm_head_training_plan(hidden_size=64, vocab_size=259)
         self.assertEqual(plan["dimensions"], {"hidden_size": 64, "vocab_size": 259})
         self.assertIn("native_lm_head_backward", plan["steps"])
+        self.assertIn("caller_supplied_projected_activations", plan["steps"])
         self.assertIn("native_full_base_backward", plan["unsupported_steps"])
         self.assertFalse(plan["full_base_training"])
 
@@ -28,7 +31,8 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
         capability = metadata["native_fp32_lm_head_only_base_training"]
-        self.assertFalse(capability["native_binding"])
+        self.assertTrue(capability["native_binding"])
+        self.assertFalse(capability["forward_integration"])
         self.assertEqual(capability["trainable_parameter_groups"], ["lm_head"])
         self.assertFalse(capability["full_base_training"])
 

@@ -1,8 +1,9 @@
-"""Explicit boundary metadata for the native FP32 base-training plan.
+"""Capability metadata for the native FP32 LM-head training boundary.
 
-This module is deliberately metadata-only.  The current ctypes ABI does not
-expose a native base-training step, so these functions must not be used as an
-implementation or as evidence that full-model training is available.
+The runtime exposes a standalone LM-head gradient/SGD ABI.  It consumes
+caller-supplied projected Tiny activations and dlogits; it is not wired into
+the Tiny forward graph or dataset training, and it does not train the
+backbone.
 """
 
 from __future__ import annotations
@@ -25,28 +26,32 @@ def native_fp32_lm_head_capability() -> dict[str, Any]:
     """Return the truthful native base-training capability contract."""
     return {
         "operation": "native_fp32_lm_head_only_base_training",
-        "status": "planned-not-implemented",
-        "production_status": "unsupported",
-        "native_binding": False,
+        "status": "implemented-standalone",
+        "production_status": "bounded",
+        "native_binding": True,
+        "forward_integration": False,
+        "activation_source": "caller-supplied_projected_tiny_activations",
+        "dataset_integration": False,
         "dtype": "fp32",
         "trainable_parameter_groups": [_NATIVE_FP32_LM_HEAD_GROUP],
         "frozen_parameter_groups": list(_UNSUPPORTED_FULL_BASE_GROUPS),
         "full_base_training": False,
         "full_base_training_status": "unsupported",
         "unsupported_full_base_groups": list(_UNSUPPORTED_FULL_BASE_GROUPS),
-        "optimizer": "not-bound",
+        "optimizer": "sgd",
         "dataset_training": False,
         "cpu_reference": True,
         "boundary": (
-            "Plan boundary only: native ctypes FP32 LM-head forward/backward/update "
-            "ABI is not implemented; CPU remains authoritative. Full-base groups "
-            "are unsupported and must not be inferred from this metadata."
+            "Standalone native FP32 LM-head gradient/SGD ABI is implemented, but "
+            "it consumes caller-supplied projected activations and dlogits; it is "
+            "not integrated into Tiny forward activations or dataset training. "
+            "Full-base groups remain unsupported."
         ),
     }
 
 
 def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> dict[str, Any]:
-    """Describe the future LM-head-only plan without claiming execution."""
+    """Describe the standalone LM-head-only execution contract."""
     if hidden_size <= 0 or vocab_size <= 0:
         raise ValueError("hidden_size and vocab_size must be positive")
     capability = native_fp32_lm_head_capability()
@@ -54,9 +59,8 @@ def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> d
         **capability,
         "dimensions": {"hidden_size": hidden_size, "vocab_size": vocab_size},
         "steps": [
-            "native_forward_frozen_backbone",
-            "native_lm_head_fp32_logits",
-            "native_lm_head_loss",
+            "caller_supplied_projected_activations",
+            "caller_supplied_dlogits",
             "native_lm_head_backward",
             "native_lm_head_optimizer_update",
         ],

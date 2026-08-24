@@ -70,9 +70,9 @@ Tolerances must be defined per dtype and reduction order. Exact token identity i
 
 ## Native FP32 LM-head-only base-training boundary
 
-The repository now exposes explicit metadata and a training-plan boundary for a future native FP32 LM-head-only path via `native_fp32_lm_head_capability()` and `native_fp32_lm_head_training_plan()`. The intended trainable group is only `lm_head`; the backbone groups (embeddings, attention QKV/output, feed-forward, normalization, and positional embeddings) remain unsupported for native base training.
+The repository exposes a bounded native FP32 LM-head-only path via `native_fp32_lm_head_capability()` and `native_fp32_lm_head_training_plan()`. The runtime ABI computes LM-head gradients and applies SGD using caller-supplied projected Tiny activations and dlogits; the only trainable group is `lm_head`. The backbone groups (embeddings, attention QKV/output, feed-forward, normalization, and positional embeddings) remain unsupported for native base training.
 
-This is **planned-not-implemented** metadata, not a native binding or a training result. The current ctypes ABI has no LM-head-only forward/backward/update entry point, so `native_binding` is false, dataset training is false, and CPU remains authoritative. The plan must not be interpreted as full-base training: `full_base_training` is false and full-base backward/update are explicitly listed as unsupported. Tests assert these boundaries.
+This is **implemented standalone**, not integrated into Tiny forward activations, Tiny loss, or dataset training. The native binding does not produce the activations or dlogits itself; CPU remains authoritative for the integrated training path. The plan must not be interpreted as full-base training: `full_base_training` is false and full-base backward/update are explicitly listed as unsupported. Tests assert these boundaries.
 
 ## Spaceslug-0.5B policy
 
