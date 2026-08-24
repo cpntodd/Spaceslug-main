@@ -550,6 +550,26 @@ class BackendSession:
         if code != 0: raise BackendError(f"Tiny batched backward accumulation returned {code}")
         return losses.tolist()
 
+    def accumulate_tiny_adamw_windows(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], mask: list[int], window_length: int) -> list[float]:
+        """Accumulate a rectangular AdamW batch with positions reset per window.
+
+        The native ABI currently exposes AdamW accumulation one token at a time;
+        keep the batching contract here so callers cannot accidentally use the
+        position in the host batch as the model position.  A future native
+        windows ABI can replace this implementation without changing trainer
+        semantics.
+        """
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(mask) or len(tokens) % window_length:
+            raise ValueError("batched Tiny AdamW windows require equal, non-empty rectangular inputs")
+        losses: list[float] = []
+        for start in range(0, len(tokens), window_length):
+            for position in range(window_length):
+                result = self.accumulate_tiny_adamw(
+                    handle, tokens[start + position], position,
+                    targets[start + position], mask[start + position])
+                losses.append(result["loss"][0])
+        return losses
+
     def finalize_tiny_sgd(self, handle: ctypes.c_void_p, learning_rate: float, normalizer: float) -> None:
         code = self._native().spaceslug_tiny_forward_finalize_lora_sgd(handle, learning_rate, normalizer)
         if code != 0: raise BackendError(f"finalize Tiny SGD returned {code}")

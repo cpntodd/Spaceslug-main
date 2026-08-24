@@ -93,6 +93,16 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             resumed.close()
         trainer.close()
 
+    def test_adamw_window_positions_reset_for_each_window(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend()
+        trainer = PersistentTinyTrainer(backend, Model(), Adapter(), optimizer="adamw")
+        trainer.train_windows([1, 2, 3, 4], [5, 6, 7, 8], 2, batch_windows=2)
+        positions = [call[2] for call in backend.calls if isinstance(call, tuple) and call[0] == "adamw_backward"]
+        self.assertEqual(positions, [0, 1, 0, 1])
+        trainer.close()
+
     def test_adamw_windows_stage_tokens_and_checkpoint_state(self):
         class Model: hidden_size, vocab_size = 64, 259
         class Adapter: hidden_size, rank = 64, 4

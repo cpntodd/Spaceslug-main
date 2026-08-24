@@ -142,10 +142,21 @@ class PersistentTinyTrainer:
             # optimizer step and its moments are identical to one contiguous stream.
             self.backend.begin_tiny_adamw(self.handle)
             for position, sample, bt, by, bm in batches:
-                for offset, (token, target, included) in enumerate(zip(bt, by, bm)):
-                    result = self.backend.accumulate_tiny_adamw(self.handle, token, offset % window_length, target, included)
-                    losses.append(result["loss"][0])
-                    selected_mask += int(included)
+                # Prefer the native batched contract.  Its position is explicitly
+                # reset at every window boundary, including multi-window batches.
+                accumulate_windows = getattr(self.backend, "accumulate_tiny_adamw_windows", None)
+                if accumulate_windows is not None:
+                    losses.extend(accumulate_windows(self.handle, bt, by, bm, window_length))
+                else:
+                    # Compatibility for older test/dummy backends: preserve the
+                    # same per-window indexing rather than relying on batch offset.
+                    for window_start in range(0, len(bt), window_length):
+                        for offset in range(window_length):
+                            index = window_start + offset
+                            result = self.backend.accumulate_tiny_adamw(
+                                self.handle, bt[index], offset, by[index], bm[index])
+                            losses.append(result["loss"][0])
+                selected_mask += sum(bm)
                 processed += len(bt) // window_length
             if not processed:
                 raise ValueError("max_windows must select at least one window")
