@@ -98,7 +98,7 @@ class BackendSession:
                     tiny_forward.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
                     tiny_forward.restype = ctypes.c_int
                     tiny_destroy = self._library.spaceslug_tiny_forward_destroy
-                                        tiny_destroy.argtypes = [ctypes.c_void_p]
+                    tiny_destroy.argtypes = [ctypes.c_void_p]
                     if hasattr(self._library, "spaceslug_tiny_forward_create_full"):
                         create_full = self._library.spaceslug_tiny_forward_create_full
                         create_full.argtypes = [ctypes.POINTER(ctypes.c_float)] * 7
