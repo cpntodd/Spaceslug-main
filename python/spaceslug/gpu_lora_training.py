@@ -52,7 +52,7 @@ def persistent_tiny_capability() -> dict[str, Any]:
             "production_training": False,
             "immutable_command_buffer_reuse_prototype": boundary["immutable_command_buffer_reuse_prototype"],
             "optimizers": ["sgd", "adamw"], "window_streaming": True,
-            "native_adamw_state_checkpoint": True, "dataset_device_resident": False,
+            "native_adamw_state_checkpoint": True, "dataset_device_resident": False, "dataset_batch_buffer_prototype": True, "dataset_batch_buffer_training": False,
             "host_staging": True, "contract": boundary["contract"]}
 
 
@@ -196,7 +196,7 @@ class PersistentTinyTrainer:
         return {"status": "ok", "step": self.step_index, "loss": losses, "windows": processed,
                 "window_length": window_length, "sample_position": self.sample_position,
                 "window_position": self.window_position, "gpu_execution": True,
-                "device_resident": True, "dataset_device_resident": False,
+                "device_resident": True, "dataset_device_resident": False, "dataset_batch_buffer_prototype": True, "dataset_batch_buffer_training": False,
                 "host_staging": True, "optimizer": self.optimizer,
                 "contract": {"hidden": 64, "vocab": 259, "rank": self.adapter.rank}}
 
