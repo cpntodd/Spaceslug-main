@@ -21,6 +21,7 @@ class BackendCapabilities:
     device: str | None = None
     software_vulkan: bool = False
     native_library: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,10 @@ class BackendSession:
                     tiny_forward = self._library.spaceslug_tiny_forward
                     tiny_forward.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
                     tiny_forward.restype = ctypes.c_int
+                    if hasattr(self._library, "spaceslug_tiny_forward_fixed_retained"):
+                        fixed_retained = self._library.spaceslug_tiny_forward_fixed_retained
+                        fixed_retained.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float)]
+                        fixed_retained.restype = ctypes.c_int
                     tiny_destroy = self._library.spaceslug_tiny_forward_destroy
                     tiny_destroy.argtypes = [ctypes.c_void_p]
                     if hasattr(self._library, "spaceslug_tiny_forward_create_full"):
@@ -183,6 +188,10 @@ class BackendSession:
                 native = self._native()
                 if hasattr(native, "spaceslug_attention_causal"):
                     operations.append("attention_causal_abi")
+                if hasattr(native, "spaceslug_tiny_forward"):
+                    operations.append("tiny_forward_abi")
+                if hasattr(native, "spaceslug_tiny_forward_fixed_retained"):
+                    operations.append("tiny_forward_fixed_retained_abi")
                 if hasattr(native, "spaceslug_lora_train_step"):
                     operations.append("lora_train_step_abi")
                 if hasattr(native, "spaceslug_attention_causal_backward"):
@@ -199,7 +208,23 @@ class BackendSession:
                     operations.append("causal_loss_abi")
             except BackendError:
                 pass
-        return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None)
+        native_retained = False
+        native_training = False
+        if self._library_path.is_file():
+            try:
+                native = self._native()
+                native_retained = hasattr(native, "spaceslug_tiny_forward_fixed_retained")
+                native_training = all(hasattr(native, name) for name in (
+                    "spaceslug_tiny_forward_begin_lora_accumulation",
+                    "spaceslug_tiny_forward_token_step_training_backward_accumulate",
+                    "spaceslug_tiny_forward_finalize_lora_sgd",
+                ))
+            except BackendError:
+                pass
+        metadata = {"tiny_forward_fixed_retained": native_retained,
+                    "tiny_training_production": native_training,
+                    "tiny_forward_token_count": 128 if native_retained else None}
+        return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None, metadata)
 
     def execute_vector_add(self, left: list[float] | None = None, right: list[float] | None = None) -> ExecutionResult:
         left = left or [1.0] * (1 << 20)
@@ -651,6 +676,22 @@ class BackendSession:
         code = native.spaceslug_tiny_forward(handle, (ctypes.c_uint32 * len(tt)).from_buffer(tt), len(tt), (ctypes.c_float * len(out)).from_buffer(out), int(final_only))
         if code != 0: raise BackendError(f"persistent Tiny forward returned {code}")
         return ExecutionResult("ok", "tiny_forward_persistent", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "persistent-forward", "gpu_execution": True, "device_resident": True}, {"logits": out.tolist()})
+
+    def execute_tiny_fixed_retained_forward(self, handle: ctypes.c_void_p, tokens: list[int]) -> ExecutionResult:
+        """Run the optional retained native forward with exactly 128 tokens."""
+        native = self._native()
+        if not hasattr(native, "spaceslug_tiny_forward_fixed_retained"):
+            return ExecutionResult("not-run", "tiny_forward_fixed_retained", "vulkan-radv", self.runtime_revision, self.capabilities().device, False,
+                                  {"parity": "not-run", "reason": "fixed retained Tiny forward ABI unavailable"}, {})
+        if len(tokens) != 128:
+            raise ValueError("fixed retained Tiny forward requires exactly 128 tokens")
+        import array
+        tt, out = array.array("I", tokens), array.array("f", [0.0] * (128 * 259))
+        code = native.spaceslug_tiny_forward_fixed_retained(handle, (ctypes.c_uint32 * 128).from_buffer(tt), (ctypes.c_float * len(out)).from_buffer(out))
+        if code != 0:
+            raise BackendError(f"fixed retained Tiny forward returned {code}")
+        return ExecutionResult("ok", "tiny_forward_fixed_retained", "vulkan-radv", self.runtime_revision, self.capabilities().device, False,
+                              {"parity": "persistent-forward", "gpu_execution": True, "device_resident": True, "fixed_tokens": 128}, {"logits": out.tolist()})
 
     def open_lora_session(self, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int) -> ctypes.c_void_p:
         native = self._native()

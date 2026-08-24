@@ -31,6 +31,12 @@ class _Backend:
     def readback_tiny_adapters(self, handle): return self.adapters
     def update_tiny_adapters(self, handle, values): self.adapters = values; self.calls.append("restore")
     def close_tiny_persistent(self, handle): self.calls.append("close")
+    def execute_tiny_fixed_retained_forward(self, handle, tokens):
+        self.calls.append(("fixed_forward", len(tokens)))
+        class Result:
+            status, operation = "ok", "tiny_forward_fixed_retained"
+            output, metrics = {"logits": [0.0] * (128 * 259)}, {"fixed_tokens": 128}
+        return Result()
     def begin_tiny_adamw(self, handle): self.calls.append("adamw_begin")
     def accumulate_tiny_adamw(self, handle, token, position, target, mask):
         self.calls.append(("adamw_backward", token, position, target, mask)); return {"loss": [float(position)]}
@@ -140,8 +146,24 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             resumed.close()
         split.close(); full.close()
 
+    def test_fixed_forward_requires_exactly_128_tokens_and_reports_metadata(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend()
+        trainer = PersistentTinyTrainer(backend, Model(), Adapter())
+        with self.assertRaises(ValueError): trainer.fixed_forward([1] * 127)
+        with self.assertRaises(ValueError): trainer.fixed_forward([1] * 129)
+        report = trainer.fixed_forward([1] * 128)
+        self.assertTrue(report["fixed_forward_retention"])
+        self.assertFalse(report["production_training"])
+        self.assertIn(("fixed_forward", 128), backend.calls)
+        trainer.close()
+
     def test_persistent_tiny_capability_metadata(self):
         capability = persistent_tiny_capability()
+        self.assertTrue(capability["fixed_forward_retention"])
+        self.assertEqual(capability["fixed_forward_tokens"], 128)
+        self.assertFalse(capability["production_training"])
         self.assertEqual(capability["optimizers"], ["sgd", "adamw"])
         self.assertEqual(capability["production_status"], "bounded")
         self.assertTrue(capability["immutable_command_buffer_reuse_prototype"])

@@ -48,6 +48,8 @@ def persistent_tiny_capability() -> dict[str, Any]:
     """Describe the PersistentTiny Python/native boundary."""
     boundary = persistent_graph_boundary()
     return {"status": boundary["status"], "production_status": boundary["production_status"],
+            "fixed_forward_retention": True, "fixed_forward_tokens": 128,
+            "production_training": False,
             "immutable_command_buffer_reuse_prototype": boundary["immutable_command_buffer_reuse_prototype"],
             "optimizers": ["sgd", "adamw"], "window_streaming": True,
             "native_adamw_state_checkpoint": True, "dataset_device_resident": False,
@@ -102,6 +104,19 @@ class PersistentTinyTrainer:
         self.beta1, self.beta2, self.epsilon = 0.9, 0.999, 1e-8
         self.sample_position = 0
         self.window_position = 0
+
+    def fixed_forward(self, tokens: list[int]) -> dict[str, Any]:
+        """Run retained forward only when the backend exposes its fixed ABI."""
+        if len(tokens) != 128:
+            raise ValueError("PersistentTiny fixed forward requires exactly 128 tokens")
+        execute = getattr(self.backend, "execute_tiny_fixed_retained_forward", None)
+        if execute is None:
+            return {"status": "not-run", "operation": "tiny_forward_fixed_retained",
+                    "fixed_forward_retention": False, "production_training": False}
+        result = execute(self.handle, tokens)
+        return {"status": result.status, "operation": result.operation,
+                "fixed_forward_retention": result.status == "ok", "production_training": False,
+                "logits": result.output.get("logits", []), "metrics": result.metrics}
 
     @staticmethod
     def iter_window_batches(tokens: list[int], targets: list[int], window_length: int,
