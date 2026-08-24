@@ -37,11 +37,11 @@ def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["adamw", "other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "rank": 4, "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["gradient_accumulation", "adamw", "other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
+    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "rank": 4, "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
 
 
 class PersistentGpuLoRATrainer:
