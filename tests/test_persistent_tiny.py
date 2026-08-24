@@ -159,6 +159,18 @@ class PersistentTinyTrainerTest(unittest.TestCase):
         self.assertIn(("fixed_forward", 128), backend.calls)
         trainer.close()
 
+    def test_profile_validation_is_explicit(self):
+        class ProfileBackend:
+            def tiny_profiles(self):
+                return [{"name": "tiny_h64_v259_vp320_t128_rank4", "hidden": 64, "vocab": 259,
+                         "padded_vocab": 320, "token_capacity": 128, "lora_rank": 4}]
+            def validate_tiny_profile(self, *values):
+                return 0 if tuple(values) == (64, 259, 320, 128, 4) else 1
+        backend = ProfileBackend()
+        self.assertEqual(backend.tiny_profiles()[0]["name"], "tiny_h64_v259_vp320_t128_rank4")
+        self.assertEqual(backend.validate_tiny_profile(64, 259, 320, 128, 4), 0)
+        self.assertNotEqual(backend.validate_tiny_profile(65, 259, 320, 128, 4), 0)
+
     def test_persistent_tiny_capability_metadata(self):
         capability = persistent_tiny_capability()
         self.assertTrue(capability["fixed_forward_retention"])

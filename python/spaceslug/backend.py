@@ -108,6 +108,16 @@ class BackendSession:
                     attention_backward = self._library.spaceslug_attention_causal_backward
                     attention_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
                     attention_backward.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_profile_count"):
+                    profile_count = self._library.spaceslug_tiny_profile_count
+                    profile_count.argtypes = []
+                    profile_count.restype = ctypes.c_uint32
+                    profile_query = self._library.spaceslug_tiny_profile_query
+                    profile_query.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+                    profile_query.restype = ctypes.c_int
+                    profile_validate = self._library.spaceslug_tiny_profile_validate
+                    profile_validate.argtypes = [ctypes.c_uint32] * 5
+                    profile_validate.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_capability"):
                     tiny_capability = self._library.spaceslug_tiny_forward_capability
                     tiny_capability.restype = ctypes.c_char_p
@@ -747,6 +757,32 @@ class BackendSession:
     def tiny_forward_capability(self) -> str:
         native = self._native()
         return native.spaceslug_tiny_forward_capability().decode("utf-8") if hasattr(native, "spaceslug_tiny_forward_capability") else "unsupported"
+
+    def tiny_profiles(self) -> list[dict[str, int | str]]:
+        native = self._native()
+        if not hasattr(native, "spaceslug_tiny_profile_count"):
+            return []
+
+        class Descriptor(ctypes.Structure):
+            _fields_ = [("name", ctypes.c_char_p), ("hidden", ctypes.c_uint32), ("vocab", ctypes.c_uint32),
+                        ("padded_vocab", ctypes.c_uint32), ("token_capacity", ctypes.c_uint32), ("lora_rank", ctypes.c_uint32)]
+
+        profiles = []
+        for index in range(native.spaceslug_tiny_profile_count()):
+            descriptor = Descriptor()
+            status = native.spaceslug_tiny_profile_query(index, ctypes.byref(descriptor))
+            if status != 0:
+                raise BackendError(f"Tiny profile query returned {status}")
+            profiles.append({"name": descriptor.name.decode("utf-8"), "hidden": descriptor.hidden,
+                             "vocab": descriptor.vocab, "padded_vocab": descriptor.padded_vocab,
+                             "token_capacity": descriptor.token_capacity, "lora_rank": descriptor.lora_rank})
+        return profiles
+
+    def validate_tiny_profile(self, hidden: int, vocab: int, padded_vocab: int, token_capacity: int, rank: int) -> int:
+        native = self._native()
+        if not hasattr(native, "spaceslug_tiny_profile_validate"):
+            return 1
+        return int(native.spaceslug_tiny_profile_validate(hidden, vocab, padded_vocab, token_capacity, rank))
 
     def execute_tiny_persistent_forward(self, handle: ctypes.c_void_p, tokens: list[int], final_only: bool = False) -> ExecutionResult:
         native = self._native()
