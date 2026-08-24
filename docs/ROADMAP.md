@@ -1,5 +1,9 @@
 # Implementation roadmap
 
+## Current Tiny graph optimizer status
+
+The graph-owned Tiny path currently integrates fixed-window AdamW for the **LM-head** and **output projection**. QKV AdamW is **not implemented**: prior integration attempts did not produce an accepted implementation, so QKV remains SGD-only and its AdamW capability must not be inferred from standalone projection APIs. This status is limited to the existing bounded graph path and does not claim full-parameter or dataset training.
+
 ## Phase 0 — contracts
 
 Freeze the product boundary, canonical IR, tensor/layout rules, artifact schemas, capability model, correctness policy, and versioning policy.
