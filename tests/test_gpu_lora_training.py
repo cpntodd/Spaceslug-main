@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from spaceslug.backend import BackendSession
-from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, gpu_lora_capability, gpu_lora_training_plan, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
+from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, PersistentGpuLoRATrainer, gpu_lora_capability, gpu_lora_training_plan, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
 from spaceslug.lora import TinyLoRAAdapter
 from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
@@ -21,19 +21,29 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             GpuLoRATrainingState.from_state_dict({"schema_version": 1, "optimizer": "adam"})
 
+    def test_persistent_gpu_session_runs_tensor_step(self):
+        backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
+        rank, rows = 4, 3
+        trainer = PersistentGpuLoRATrainer(backend, [0.01] * (64 * rank), [0.02] * (rank * 64), rank, 0.01, rows)
+        report = trainer.step([0.03] * (rows * 64), [0.04] * (rows * 64))
+        self.assertTrue(report["gpu_execution"])
+        self.assertTrue(report["device_resident"])
+        self.assertEqual(report["parity"], "persistent-session")
+
     def test_capability_keeps_unimplemented_paths_explicit(self):
         capability = gpu_lora_capability()
         self.assertEqual(capability["base_weights"], "frozen")
-        self.assertFalse(capability["device_resident"])
+        self.assertTrue(capability["device_resident"])
+        self.assertTrue(capability["persistent_command_buffer"])
         self.assertFalse(capability["adamw"])
         self.assertFalse(capability["dataset_training"])
-        self.assertFalse(capability["persistent_command_buffer"])
+        self.assertTrue(capability["persistent_command_buffer"])
 
     def test_training_plan_lists_all_gpu_stages_and_boundaries(self):
         plan = gpu_lora_training_plan()
-        self.assertEqual(plan["status"], "bounded-host-orchestrated")
+        self.assertEqual(plan["status"], "persistent-tensor-session-plus-bounded-lm-graph")
         self.assertIn("gpu_multi_adapter_sgd", plan["steps"])
-        self.assertIn("persistent-device-resident-buffers", plan["unsupported"])
+        self.assertIn("persistent-token-derived-LM-graph", plan["unsupported"])
 
     def test_repeated_gpu_steps_update_adapter_and_checkpoint(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")

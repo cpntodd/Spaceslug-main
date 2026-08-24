@@ -91,6 +91,19 @@ class BackendSession:
                     attention_backward = self._library.spaceslug_attention_causal_backward
                     attention_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
                     attention_backward.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_lora_session_create"):
+                    session_create = self._library.spaceslug_lora_session_create
+                    session_create.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_float, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_void_p)]
+                    session_create.restype = ctypes.c_int
+                    session_step = self._library.spaceslug_lora_session_step
+                    session_step.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
+                    session_step.restype = ctypes.c_int
+                    session_readback = self._library.spaceslug_lora_session_readback
+                    session_readback.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
+                    session_readback.restype = ctypes.c_int
+                    session_destroy = self._library.spaceslug_lora_session_destroy
+                    session_destroy.argtypes = [ctypes.c_void_p]
+                    session_destroy.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_sgd_multi"):
                     sgd_multi = self._library.spaceslug_lora_sgd_multi
                     sgd_multi.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_uint32]
@@ -125,6 +138,8 @@ class BackendSession:
                     operations.append("lora_gradients_multi_abi")
                 if hasattr(native, "spaceslug_lora_sgd_multi"):
                     operations.append("lora_sgd_multi_abi")
+                if hasattr(native, "spaceslug_lora_session_create"):
+                    operations.append("lora_session_persistent_abi")
                 if hasattr(native, "spaceslug_causal_loss"):
                     operations.append("causal_loss_abi")
             except BackendError:
@@ -430,6 +445,26 @@ class BackendSession:
             else: os.environ["VK_ICD_FILENAMES"] = old_icd
         if code != 0: raise BackendError(f"native projection backward returned {code}")
         return list(result)
+
+    def execute_lora_session_step(self, x: list[float], dy: list[float], a: list[float], b: list[float], rank: int, learning_rate: float) -> ExecutionResult:
+        if len(x) == 0 or len(x) % 64 or len(dy) != len(x) or len(a) != 64 * rank or len(b) != rank * 64 or rank < 1 or rank > 8:
+            return ExecutionResult("not-run", "lora_session_step", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "persistent session requires X/dY [M,64] and A/B factors"}, {})
+        native = self._native()
+        if not hasattr(native, "spaceslug_lora_session_create"):
+            return ExecutionResult("not-run", "lora_session_step", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "persistent session ABI unavailable"}, {})
+        import array, ctypes
+        aa, bb, xx, dd, yy = (array.array("f", values) for values in (a, b, x, dy, [0.0] * len(x)))
+        handle = ctypes.c_void_p()
+        code = native.spaceslug_lora_session_create(len(x) // 64, rank, learning_rate, (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), ctypes.byref(handle))
+        if code != 0: raise BackendError(f"persistent session create returned {code}")
+        try:
+            code = native.spaceslug_lora_session_step(handle, (ctypes.c_float * len(xx)).from_buffer(xx), (ctypes.c_float * len(dd)).from_buffer(dd), (ctypes.c_float * len(yy)).from_buffer(yy))
+            if code != 0: raise BackendError(f"persistent session step returned {code}")
+            code = native.spaceslug_lora_session_readback(handle, (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb))
+            if code != 0: raise BackendError(f"persistent session readback returned {code}")
+        finally:
+            native.spaceslug_lora_session_destroy(handle)
+        return ExecutionResult("ok", "lora_session_step", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "persistent-session", "gpu_execution": True, "device_resident": True}, {"y": yy.tolist(), "a": aa.tolist(), "b": bb.tolist()})
 
     def _native_multi_sgd(self, a: list[float], b: list[float], da: list[float], db: list[float], learning_rate: float, rank: int) -> tuple[list[float], list[float]]:
         import array, ctypes, os

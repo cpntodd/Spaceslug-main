@@ -33,11 +33,29 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability() -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": False, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "persistent_command_buffer": False, "boundary": "per-step GPU tensor orchestration with transient ABI buffers; no persistent device-resident loop"}
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": True, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "persistent_command_buffer": True, "boundary": "persistent tensor LoRA session is available; full token-derived LM graph remains transient and host-orchestrated"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "bounded-host-orchestrated", "steps": ["gpu_lora_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd"], "buffers": "transient-per-ABI-call", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["persistent-device-resident-buffers", "command-buffer-reuse", "gradient-accumulation", "adamw", "dataset-training"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tensor-session-plus-bounded-lm-graph", "steps": ["gpu_lora_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "persistent_lora_session"], "buffers": "persistent-for-tensor-session", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["persistent-token-derived-LM-graph", "gradient-accumulation", "adamw", "dataset-training"]}
+
+
+class PersistentGpuLoRATrainer:
+    """Persistent native LoRA tensor session; keeps A/B device-resident per session."""
+    def __init__(self, backend: Any, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int) -> None:
+        self.backend, self.a, self.b, self.rank, self.learning_rate, self.rows = backend, list(a), list(b), rank, learning_rate, rows
+        if not hasattr(backend, "execute_lora_session_step"):
+            raise ValueError("persistent GPU LoRA session is unavailable")
+
+    def step(self, x: list[float], dy: list[float]) -> dict[str, Any]:
+        result = self.backend.execute_lora_session_step(x, dy, self.a, self.b, self.rank, self.learning_rate)
+        if result.status != "ok":
+            raise RuntimeError(result.metrics.get("reason", "persistent GPU LoRA step failed"))
+        self.a, self.b = result.output["a"], result.output["b"]
+        return {"status": result.status, "gpu_execution": True, "device_resident": True, "parity": result.metrics["parity"], "y": result.output["y"]}
+
+    def checkpoint(self, path: str | Path) -> None:
+        save_gpu_lora_checkpoint(path, GpuLoRATrainingState(step=0, learning_rate=self.learning_rate, device_resident=True), {"rank": self.rank, "a": self.a, "b": self.b})
 
 
 class GpuLoRATrainer:
