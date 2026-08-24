@@ -1,3 +1,5 @@
+import json
+import tempfile
 import unittest
 
 from spaceslug.gpu_lora_training import PersistentTinyTrainer
@@ -21,6 +23,10 @@ class _Backend:
 
     def finalize_tiny_sgd(self, handle, learning_rate, normalizer):
         self.calls.append(("finalize", learning_rate, normalizer))
+
+    def accumulate_tiny_windows(self, handle, tokens, targets, mask, window_length):
+        self.calls.append(("windows", tokens, targets, mask, window_length))
+        return [float(i) for i in range(len(tokens))]
 
     def readback_tiny_adapters(self, handle): return self.adapters
     def update_tiny_adapters(self, handle, values): self.adapters = values; self.calls.append("restore")
@@ -68,6 +74,32 @@ class PersistentTinyTrainerTest(unittest.TestCase):
         self.assertEqual(report["loss"], [0.0, 1.0, 2.0, 3.0])
         self.assertEqual(report["windows"], 2)
         self.assertIn(("windows", [1, 2, 3, 4], [5, 6, 7, 8], [1, 1, 0, 1], 2), backend.calls)
+        trainer.close()
+
+    def test_deterministic_bounded_streaming_and_resume_metadata(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend(); trainer = PersistentTinyTrainer(backend, Model(), Adapter())
+        report = trainer.train_windows(list(range(8)), list(range(10, 18)), 2, batch_windows=1, max_windows=2)
+        self.assertEqual(report["window_position"], 2)
+        self.assertFalse(report["dataset_device_resident"])
+        with tempfile.TemporaryDirectory() as root:
+            path = root + "/checkpoint.json"; trainer.checkpoint(path)
+            with open(path) as checkpoint_file:
+                payload = json.load(checkpoint_file)
+            self.assertEqual(payload["training"]["sample_position"], 4)
+            resumed = PersistentTinyTrainer.resume(_Backend(), Model(), Adapter(), path)
+            self.assertEqual((resumed.sample_position, resumed.window_position), (4, 2))
+            resumed.close()
+        trainer.close()
+
+    def test_streaming_capability_boundaries_are_explicit(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        with self.assertRaises(ValueError):
+            list(PersistentTinyTrainer.iter_window_batches([1, 2], [3, 4], 2, max_windows=-1))
+        trainer = PersistentTinyTrainer(_Backend(), Model(), Adapter(), optimizer="adamw")
+        with self.assertRaises(NotImplementedError): trainer.train_windows([1, 2], [3, 4], 2)
         trainer.close()
 
     def test_unsupported_shape_is_explicit(self):

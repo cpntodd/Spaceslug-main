@@ -77,7 +77,11 @@ class PersistentGpuLoRATrainer:
 
 
 class PersistentTinyTrainer:
-    """Fixed native Tiny graph trainer with SGD and optional native AdamW."""
+    """Fixed native Tiny graph trainer with bounded host-side window streaming.
+
+    Dataset batches are sliced and staged by the host for each call.  The native
+    persistent graph retains model/adapter state only; it never owns the dataset.
+    """
     def __init__(self, backend: Any, model: Any, adapter: Any, learning_rate: float = 0.01, optimizer: str = "sgd", weight_decay: float = 0.0) -> None:
         if (model.hidden_size, model.vocab_size, adapter.hidden_size, adapter.rank) != (64, 259, 64, 4):
             raise ValueError("PersistentTiny supports only H=64, V=259, rank=4")
@@ -86,18 +90,90 @@ class PersistentTinyTrainer:
         self.backend, self.model, self.adapter = backend, model, adapter
         self.learning_rate, self.weight_decay, self.optimizer, self.step_index, self.handle = learning_rate, weight_decay, optimizer, 0, backend.create_tiny_persistent_full(model, adapter)
         self.beta1, self.beta2, self.epsilon = 0.9, 0.999, 1e-8
+        self.sample_position = 0
+        self.window_position = 0
 
-    def train_windows(self, tokens: list[int], targets: list[int], window_length: int, mask: list[int] | None = None) -> dict[str, Any]:
+    @staticmethod
+    def iter_window_batches(tokens: list[int], targets: list[int], window_length: int,
+                            mask: list[int] | None = None, *, start_window: int = 0,
+                            max_windows: int | None = None, batch_windows: int | None = None):
+        """Yield deterministic host-staged batches and their source positions.
+
+        Each yielded item is ``(window_position, sample_position, tokens, targets,
+        mask)``.  No dataset storage is transferred to, or retained on, the device.
+        """
         if not 0 < window_length <= 128 or not tokens or len(tokens) % window_length:
             raise ValueError("PersistentTiny requires non-empty fixed windows of length 1..128")
         if len(targets) != len(tokens): raise ValueError("targets length must match tokens")
-        mask = mask or [1] * len(tokens)
+        mask = [1] * len(tokens) if mask is None else mask
         if len(mask) != len(tokens): raise ValueError("mask length must match tokens")
+        total = len(tokens) // window_length
+        if not 0 <= start_window <= total: raise ValueError("start_window is outside the dataset")
+        if max_windows is not None and max_windows < 0: raise ValueError("max_windows must not be negative")
+        if batch_windows is not None and batch_windows <= 0: raise ValueError("batch_windows must be positive")
+        end = total if max_windows is None else min(total, start_window + max_windows)
+        width = batch_windows or (end - start_window or 1)
+        for first in range(start_window, end, width):
+            last = min(end, first + width)
+            lo, hi = first * window_length, last * window_length
+            yield first, lo, tokens[lo:hi], targets[lo:hi], mask[lo:hi]
+
+    def train_windows(self, tokens: list[int], targets: list[int], window_length: int,
+                      mask: list[int] | None = None, *, start_window: int | None = None,
+                      max_windows: int | None = None, batch_windows: int | None = None) -> dict[str, Any]:
+        if self.optimizer != "sgd":
+            raise NotImplementedError("train_windows currently supports the native SGD window path only")
+        start = self.window_position if start_window is None else start_window
+        batches = self.iter_window_batches(tokens, targets, window_length, mask,
+                                           start_window=start, max_windows=max_windows,
+                                           batch_windows=batch_windows)
+        losses: list[Any] = []
+        processed = 0
         self.backend.begin_tiny_accumulation(self.handle)
-        losses = self.backend.accumulate_tiny_windows(self.handle, tokens, targets, mask, window_length)
-        self.backend.finalize_tiny_sgd(self.handle, self.learning_rate, float(sum(mask) or 1))
+        for position, sample, bt, by, bm in batches:
+            result = self.backend.accumulate_tiny_windows(self.handle, bt, by, bm, window_length)
+            losses.extend(result)
+            processed += len(bt) // window_length
+        if not processed:
+            raise ValueError("max_windows must select at least one window")
+        self.backend.finalize_tiny_sgd(self.handle, self.learning_rate,
+                                       float(sum(mask or [1] * len(tokens)) or 1))
         self.step_index += 1
-        return {"status": "ok", "step": self.step_index, "loss": losses, "windows": len(tokens) // window_length, "window_length": window_length, "gpu_execution": True, "device_resident": True, "optimizer": "sgd", "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+        self.window_position = start + processed
+        self.sample_position = self.window_position * window_length
+        return {"status": "ok", "step": self.step_index, "loss": losses, "windows": processed,
+                "window_length": window_length, "sample_position": self.sample_position,
+                "window_position": self.window_position, "gpu_execution": True,
+                "device_resident": True, "dataset_device_resident": False,
+                "host_staging": True, "optimizer": "sgd",
+                "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+
+    def checkpoint(self, path: str | Path) -> None:
+        """Save adapter and resumable stream metadata; dataset remains host-owned."""
+        data: dict[str, Any] = {"schema_version": 1, "training": {
+            "step": self.step_index, "learning_rate": self.learning_rate,
+            "weight_decay": self.weight_decay, "optimizer": self.optimizer,
+            "sample_position": self.sample_position, "window_position": self.window_position,
+            "dataset_device_resident": False}, "adapter": self.readback_adapter()}
+        if self.optimizer == "adamw":
+            try: data["optimizer_state"] = self.readback_optimizer_state()
+            except (AttributeError, NotImplementedError): pass
+        Path(path).write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
+
+    @classmethod
+    def resume(cls, backend: Any, model: Any, adapter: Any, path: str | Path) -> "PersistentTinyTrainer":
+        data = json.loads(Path(path).read_text())
+        if data.get("schema_version") != 1: raise ValueError("unsupported PersistentTiny checkpoint")
+        state = data["training"]
+        trainer = cls(backend, model, adapter, float(state["learning_rate"]),
+                      str(state["optimizer"]), float(state.get("weight_decay", 0.0)))
+        trainer.restore_adapter(data["adapter"])
+        trainer.step_index = int(state["step"]); trainer.sample_position = int(state.get("sample_position", 0))
+        trainer.window_position = int(state.get("window_position", 0))
+        if "optimizer_state" in data:
+            try: trainer.restore_optimizer_state(data["optimizer_state"])
+            except (AttributeError, NotImplementedError): raise ValueError("checkpoint requires native AdamW state support")
+        return trainer
 
     def train_tokens_adamw(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
         return self._train_tokens(tokens, targets, mask, "adamw")
