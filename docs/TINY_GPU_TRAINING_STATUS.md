@@ -8,8 +8,8 @@
 
 | Repository | Revision | Relevant committed artifacts |
 |---|---|---|
-| `spaceslug-main` | `c81859b` | Python host/backend and orchestration under `python/spaceslug/`; native ABI/client under `native/`; GPU/CPU acceptance tests under `tests/` |
-| `vulkan-runtime` | `f964cb9` | Vulkan APIs under `src/api/`, embedded GLSL kernels under `shaders/`, and per-kernel tests under `tests/` |
+| `spaceslug-main` | `e3b0dfa` | Python host/backend and orchestration under `python/spaceslug/`; native ABI/client under `native/`; GPU/CPU acceptance tests under `tests/` |
+| `vulkan-runtime` | `fdbb5c2` | Vulkan APIs under `src/api/`, embedded GLSL kernels under `shaders/`, and per-kernel tests under `tests/` |
 
 The current runtime facts are: `dataset_batch_buffer` is a standalone device-resident fixed-window staging API; `ForwardResourceGraph::train_dataset_batch(...)` is explicitly unsupported and returns `-3`; the FP16 Tiny constructor is an evaluation/storage path that widens frozen binary16 inputs to the unchanged FP32 graph; ranks 4 and 8 are supported; only fixed retained forward is retained; and full training uses ordinary submissions. These are implementation contracts, not separate acceptance releases.
 
@@ -22,6 +22,24 @@ The current runtime facts are: `dataset_batch_buffer` is a standalone device-res
 - The GPU training graph covers the implemented forward composition, causal loss/dLogits, LM-head/output/causal-attention/QKV backward, four adapter gradient paths, accumulation, SGD or AdamW update paths exposed by the current APIs, device-resident activation/state buffers, adapter/state readback/update, and checkpoint/restore orchestration. This does not include dataset-batch-buffer integration: that standalone buffer is retained and GPU-processed, but it is not the training graph and `train_dataset_batch` returns `-3`.
 - The host exposes explicit capability and fallback/status metadata. CPU remains authoritative when a shape, rank, operation, device, or runtime prerequisite is outside the GPU contract.
 - The fixed retained-command path is intentionally narrower: exactly `T=128` input tokens and all `T*Vp` logits. It is forward-only; changing token staging data and resubmitting the recorded graph is supported.
+
+### Profile metadata API
+
+The runtime C API is the authoritative profile enumeration and validation boundary:
+
+```c
+uint32_t spaceslug_tiny_profile_count(void);
+int spaceslug_tiny_profile_query(uint32_t index,
+                                 spaceslug_tiny_profile_descriptor *out);
+int spaceslug_tiny_profile_validate(uint32_t hidden, uint32_t vocab,
+                                    uint32_t padded_vocab,
+                                    uint32_t token_capacity, uint32_t rank);
+```
+
+`spaceslug_tiny_profile_count()` currently returns **2**. Querying index `0` or `1` returns a descriptor for `tiny_h64_v259_vp320_t128_rank4` or `tiny_h64_v259_vp320_t128_rank8`, respectively (`H=64`, `V=259`, `Vp=320`, `T=128`, rank `4` or `8`). The query result is `SPACESLUG_TINY_PROFILE_SUPPORTED` (`0`). An out-of-range index returns `SPACESLUG_TINY_PROFILE_UNSUPPORTED` (`1`), and a null output pointer returns `SPACESLUG_TINY_PROFILE_INVALID_ARGUMENT` (`2`); a failed query leaves its output untouched.
+
+`spaceslug_tiny_profile_validate()` returns `SUPPORTED` (`0`) only for those two exact tuples. A non-zero dimension or rank is an `INVALID_ARGUMENT` (`2`); positive but unlisted dimensions or ranks return `UNSUPPORTED` (`1`). Callers must enumerate or validate before dispatch. Rejection is explicit: unsupported profile requests must not be silently coerced into a nearby profile or reported as GPU support. This metadata API does not initialize Vulkan and can be tested on hosts without a Vulkan device or ICD. The Python bridge exposes the same boundary through `BackendSession.tiny_profiles()` and `BackendSession.validate_tiny_profile(...)`.
+
 
 ### Runtime (`vulkan-runtime`)
 
@@ -40,7 +58,7 @@ The current runtime facts are: `dataset_batch_buffer` is a standalone device-res
 PYTHONPATH=python python3 -m unittest -v
 ```
 
-**Result: 106 tests passed in 12.919s.** This includes CPU/reference, host backend, native SGEMM/LoRA parity, persistent Tiny window/AdamW state, checkpoint/artifact, TUI, and explicit GPU-boundary tests. Passing host tests establish contract/parity behavior; they do not establish RX580 performance or useful model quality.
+**Result: 110 tests passed in 12.091s.** This includes CPU/reference, host backend, native SGEMM/LoRA parity, persistent Tiny window/AdamW state, checkpoint/artifact, TUI, and explicit GPU-boundary tests. Passing host tests establish contract/parity behavior; they do not establish RX580 performance or useful model quality.
 
 ### Vulkan runtime
 
@@ -49,9 +67,11 @@ The existing debug build was rebuilt and the full suite was run on the default V
 ```sh
 cmake --build build/debug --parallel 2
 ctest --test-dir build/debug --output-on-failure
+# Focused, device-independent profile metadata gate:
+ctest --test-dir build/debug -R '^tiny_profile_api$' --output-on-failure
 ```
 
-**Result: 41/41 tests passed.** The suite includes the Tiny persistent and immutable-command tests, LoRA/causal-loss/backward APIs, reduced-precision storage, fp32/fp16-storage/CQ4 kernels, execution engine, and benchmarks (benchmark tests passed; no performance number is asserted here).
+**Result: 43/43 tests passed.** The suite includes the Tiny profile metadata, persistent, and immutable-command tests, LoRA/causal-loss/backward APIs, reduced-precision storage, fp32/fp16-storage/CQ4 kernels, execution engine, and benchmarks (benchmark tests passed; no performance number is asserted here).
 
 The same correctness suite was run on lavapipe:
 
