@@ -83,6 +83,27 @@ def integrated_tiny_lm_head_capability(*, available: bool = False, runtime_capab
     }
 
 
+def integrated_tiny_lm_head_adamw_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
+    """Return the conditional graph-owned Tiny LM-head AdamW contract."""
+    return {
+        "operation": "tiny_graph_owned_lm_head_adamw",
+        "status": "available" if available else "unsupported",
+        "native_binding": available,
+        "integrated_graph_adamw": available,
+        "graph_owned_lm_head": True,
+        "standalone_api": False,
+        "optimizer": "adamw",
+        "optimizer_state": "graph-owned-m-v-step",
+        "trainable_parameter_groups": ["lm_head"],
+        "dataset_integration": False,
+        "retained_training": False,
+        "return_code_when_unavailable": -4,
+        "return_code": 0 if available else -4,
+        "contract": "persistent Tiny forward graph owns activations, LM-head, AdamW moments, and step; host owns token windows and checkpoints",
+        "runtime_capability": runtime_capability,
+    }
+
+
 def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> dict[str, Any]:
     """Describe the standalone LM-head-only execution contract."""
     if hidden_size <= 0 or vocab_size <= 0:
@@ -104,4 +125,4 @@ def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> d
     }
 
 
-__all__ = ["integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
+__all__ = ["integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
