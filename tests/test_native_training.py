@@ -52,6 +52,8 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertIn("tiny_graph_base_train_lm_head", metadata)
         self.assertIn("tiny_graph_base_train_lm_head_capability", metadata)
         self.assertFalse(metadata["tiny_graph_base_train_lm_head_training"])
+        self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_methods"], metadata["tiny_graph_base_train_lm_head"])
+        self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_return_code"], -4 if metadata["tiny_graph_base_train_lm_head"] else None)
         if metadata["tiny_graph_base_train_lm_head"]:
             self.assertTrue(metadata["tiny_graph_base_train_lm_head_group_supported"])
             self.assertIn("lm_head_owned_fp32_import_readback", metadata["tiny_graph_base_train_lm_head_capability"])
