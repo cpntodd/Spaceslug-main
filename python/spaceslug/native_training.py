@@ -30,6 +30,8 @@ def native_fp32_lm_head_capability() -> dict[str, Any]:
         "status": "implemented-standalone",
         "production_status": "bounded",
         "native_binding": True,
+        "standalone_api": True,
+        "graph_owned_lm_head": False,
         "forward_integration": False,
         "tiny_graph_integration": False,
         "activation_source": "caller-supplied",

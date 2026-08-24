@@ -10,6 +10,8 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         capability = native_fp32_lm_head_capability()
         self.assertEqual(capability["status"], "implemented-standalone")
         self.assertTrue(capability["native_binding"])
+        self.assertTrue(capability["standalone_api"])
+        self.assertFalse(capability["graph_owned_lm_head"])
         self.assertFalse(capability["forward_integration"])
         self.assertFalse(capability["tiny_graph_integration"])
         self.assertFalse(capability["dataset_integration"])
@@ -43,6 +45,18 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertFalse(capability["tiny_graph_integration"])
         self.assertEqual(capability["trainable_parameter_groups"], ["lm_head", "output_projection", "combined_qkv"])
         self.assertFalse(capability["full_base_training"])
+
+    def test_runtime_graph_owned_lm_head_boundary_is_metadata_only(self):
+        runtime = Path(__file__).parents[2] / "vulkan-runtime"
+        metadata = BackendSession(runtime, "test").capabilities().metadata
+        self.assertIn("tiny_graph_base_train_lm_head", metadata)
+        self.assertIn("tiny_graph_base_train_lm_head_capability", metadata)
+        self.assertFalse(metadata["tiny_graph_base_train_lm_head_training"])
+        if metadata["tiny_graph_base_train_lm_head"]:
+            self.assertTrue(metadata["tiny_graph_base_train_lm_head_group_supported"])
+            self.assertIn("lm_head_owned_fp32_import_readback", metadata["tiny_graph_base_train_lm_head_capability"])
+        else:
+            self.assertIsNone(metadata["tiny_graph_base_train_lm_head_capability"])
 
 
 if __name__ == "__main__":

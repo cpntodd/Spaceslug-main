@@ -118,6 +118,22 @@ class BackendSession:
                     profile_validate = self._library.spaceslug_tiny_profile_validate
                     profile_validate.argtypes = [ctypes.c_uint32] * 5
                     profile_validate.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_base_train_capability"):
+                    base_train_capability = self._library.spaceslug_tiny_forward_base_train_capability
+                    base_train_capability.argtypes = []
+                    base_train_capability.restype = ctypes.c_char_p
+                if hasattr(self._library, "spaceslug_tiny_forward_base_train_group_supported"):
+                    base_train_group_supported = self._library.spaceslug_tiny_forward_base_train_group_supported
+                    base_train_group_supported.argtypes = [ctypes.c_uint32]
+                    base_train_group_supported.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_import_base_train_lm_head"):
+                    import_base_train_lm_head = self._library.spaceslug_tiny_forward_import_base_train_lm_head
+                    import_base_train_lm_head.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+                    import_base_train_lm_head.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_readback_base_train_lm_head"):
+                    readback_base_train_lm_head = self._library.spaceslug_tiny_forward_readback_base_train_lm_head
+                    readback_base_train_lm_head.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+                    readback_base_train_lm_head.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_capability"):
                     tiny_capability = self._library.spaceslug_tiny_forward_capability
                     tiny_capability.restype = ctypes.c_char_p
@@ -279,11 +295,32 @@ class BackendSession:
                 pass
         from .native_training import native_fp32_lm_head_capability
         native_fp32_base_training = native_fp32_lm_head_capability()
+        graph_lm_head = False
+        graph_lm_head_capability = None
+        graph_lm_head_group_supported = False
+        if self._library_path.is_file():
+            try:
+                native = self._native()
+                graph_lm_head = all(hasattr(native, name) for name in (
+                    "spaceslug_tiny_forward_base_train_capability",
+                    "spaceslug_tiny_forward_base_train_group_supported",
+                    "spaceslug_tiny_forward_import_base_train_lm_head",
+                    "spaceslug_tiny_forward_readback_base_train_lm_head",
+                ))
+                if graph_lm_head:
+                    graph_lm_head_capability = native.spaceslug_tiny_forward_base_train_capability().decode("utf-8")
+                    graph_lm_head_group_supported = bool(native.spaceslug_tiny_forward_base_train_group_supported(1))
+            except (BackendError, AttributeError):
+                pass
         metadata = {"tiny_forward_fixed_retained": native_retained,
                     "tiny_forward_loss_fixed_retained": native_retained_loss,
                     "tiny_training_production": native_training,
                     "native_fp32_base_training_subsets": native_fp32_base_training,
                     "native_fp32_lm_head_only_base_training": native_fp32_base_training,
+                     "tiny_graph_base_train_lm_head": graph_lm_head,
+                     "tiny_graph_base_train_lm_head_capability": graph_lm_head_capability,
+                     "tiny_graph_base_train_lm_head_group_supported": graph_lm_head_group_supported,
+                     "tiny_graph_base_train_lm_head_training": False,
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
