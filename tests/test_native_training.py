@@ -84,6 +84,28 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         session.train_tiny_graph_lm_head_sgd(123, [1, 2], [3, 4], [1, 1], 0.25)
         self.assertEqual(calls, [(123, [1, 2], [3, 4], [1, 1], 2, 0.25)])
 
+    def test_integrated_output_and_qkv_sgd_contracts_are_distinct(self):
+        output = integrated_tiny_lm_head_capability(group="output", available=True)
+        qkv = integrated_tiny_lm_head_capability(group="qkv", available=True)
+        self.assertEqual(output["parameter_group"], "output")
+        self.assertEqual(qkv["parameter_group"], "qkv")
+        self.assertTrue(output["adamw_unsupported"])
+        self.assertEqual(qkv["adamw_return_code"], -4)
+        self.assertFalse(output["standalone_api"])
+
+    def test_mocked_ctypes_trainer_binds_output_and_qkv_sgd_and_caps_rows(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_train_output_sgd(self, *args): calls.append(("output", args)); return 0
+            def spaceslug_tiny_forward_train_qkv_sgd(self, *args): calls.append(("qkv", args)); return 0
+        session._native = lambda: Native()
+        session.train_tiny_graph_output_sgd(123, [1, 2], [3, 4], [1, 1], 0.25)
+        session.train_tiny_graph_qkv_sgd(123, [1], [2], [1], 0.5)
+        self.assertEqual([call[0] for call in calls], ["output", "qkv"])
+        with self.assertRaises(ValueError):
+            session.train_tiny_graph_output_sgd(123, [1] * 129, [2] * 129, [1] * 129, 0.1)
+
     def test_mocked_ctypes_trainer_binds_graph_adamw_and_state(self):
         session = BackendSession("/tmp/runtime", "test")
         calls = []

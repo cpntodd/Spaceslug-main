@@ -59,26 +59,27 @@ def native_fp32_lm_head_capability() -> dict[str, Any]:
     }
 
 
-def integrated_tiny_lm_head_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
-    """Return the graph-owned Tiny LM-head SGD contract.
-
-    ``available`` is supplied by the ctypes symbol probe; this function never
-    claims integrated support merely because the standalone API exists.
-    """
+def integrated_tiny_lm_head_capability(*, group: str = "lm_head", available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
+    """Return a graph-owned Tiny SGD contract for one parameter group."""
+    if group not in {"lm_head", "output", "qkv"}:
+        raise ValueError("group must be lm_head, output, or qkv")
     return {
-        "operation": "tiny_graph_owned_lm_head_sgd",
+        "operation": f"tiny_graph_owned_{group}_sgd",
+        "parameter_group": group,
         "status": "available" if available else "unsupported",
         "native_binding": available,
         "integrated_graph_sgd": True,
-        "graph_owned_lm_head": True,
+        "graph_owned_lm_head": group == "lm_head",
+        "graph_owned_parameter_group": True,
         "standalone_api": False,
         "activation_source": "graph-owned-forward-activations",
         "optimizer": "sgd",
         "adamw": False,
-        "adamw_return_code": -4,
-        "trainable_parameter_groups": ["lm_head"],
+        "trainable_parameter_groups": [group],
         "dataset_integration": False,
-        "contract": "persistent Tiny forward graph owns activations and LM-head; fixed-window token/target/mask SGD",
+        "adamw_unsupported": True,
+        "adamw_return_code": -4,
+        "contract": f"persistent Tiny forward graph owns activations and {group}; fixed-window token/target/mask SGD",
         "runtime_capability": runtime_capability,
     }
 

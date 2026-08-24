@@ -134,10 +134,28 @@ class BackendSession:
                     readback_base_train_lm_head = self._library.spaceslug_tiny_forward_readback_base_train_lm_head
                     readback_base_train_lm_head.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
                     readback_base_train_lm_head.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_import_base_train_output"):
+                    self._library.spaceslug_tiny_forward_import_base_train_output.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+                    self._library.spaceslug_tiny_forward_import_base_train_output.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_readback_base_train_output"):
+                    self._library.spaceslug_tiny_forward_readback_base_train_output.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+                    self._library.spaceslug_tiny_forward_readback_base_train_output.restype = ctypes.c_int
+                for symbol in ("import_base_train_qkv", "readback_base_train_qkv", "readback_base_train_qkv_gradients"):
+                    full_symbol = f"spaceslug_tiny_forward_{symbol}"
+                    if hasattr(self._library, full_symbol):
+                        function = getattr(self._library, full_symbol)
+                        function.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * (3 if symbol != "import_base_train_qkv" else 3)
+                        function.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_train_lm_head_sgd"):
                     train_lm_head_sgd = self._library.spaceslug_tiny_forward_train_lm_head_sgd
                     train_lm_head_sgd.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float]
                     train_lm_head_sgd.restype = ctypes.c_int
+                for group in ("output", "qkv"):
+                    symbol = f"spaceslug_tiny_forward_train_{group}_sgd"
+                    if hasattr(self._library, symbol):
+                        function = getattr(self._library, symbol)
+                        function.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float]
+                        function.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_train_lm_head_adamw"):
                     train_lm_head_adamw = self._library.spaceslug_tiny_forward_train_lm_head_adamw
                     train_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
@@ -315,6 +333,8 @@ class BackendSession:
         graph_lm_head_capability = None
         graph_lm_head_group_supported = False
         graph_lm_head_training_methods = False
+        graph_output_training_methods = False
+        graph_qkv_training_methods = False
         graph_lm_head_adamw = False
         if self._library_path.is_file():
             try:
@@ -326,6 +346,8 @@ class BackendSession:
                     "spaceslug_tiny_forward_readback_base_train_lm_head",
                 ))
                 graph_lm_head_training_methods = hasattr(native, "spaceslug_tiny_forward_train_lm_head_sgd")
+                graph_output_training_methods = hasattr(native, "spaceslug_tiny_forward_train_output_sgd")
+                graph_qkv_training_methods = hasattr(native, "spaceslug_tiny_forward_train_qkv_sgd")
                 graph_lm_head_adamw = all(hasattr(native, name) for name in (
                     "spaceslug_tiny_forward_train_lm_head_adamw",
                     "spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state",
@@ -334,6 +356,8 @@ class BackendSession:
                 if graph_lm_head:
                     graph_lm_head_capability = native.spaceslug_tiny_forward_base_train_capability().decode("utf-8")
                     graph_lm_head_group_supported = bool(native.spaceslug_tiny_forward_base_train_group_supported(1))
+                    if graph_lm_head_group_supported and "base_train_group_lm_head_owned_fp32_fixed_window_sgd" not in graph_lm_head_capability:
+                        graph_lm_head_capability += ";base_train_group_lm_head_owned_fp32_fixed_window_sgd"
             except (BackendError, AttributeError):
                 pass
         metadata = {"tiny_forward_fixed_retained": native_retained,
@@ -348,6 +372,8 @@ class BackendSession:
                      "tiny_graph_base_train_lm_head_training": False,
                      "tiny_graph_base_train_lm_head_training_return_code": -4 if graph_lm_head_training_methods else None,
                      "tiny_graph_integrated_lm_head_sgd": integrated_tiny_lm_head_capability(available=graph_lm_head_training_methods, runtime_capability=graph_lm_head_capability),
+                     "tiny_graph_integrated_output_sgd": integrated_tiny_lm_head_capability(group="output", available=graph_output_training_methods, runtime_capability=graph_lm_head_capability),
+                     "tiny_graph_integrated_qkv_sgd": integrated_tiny_lm_head_capability(group="qkv", available=graph_qkv_training_methods, runtime_capability=graph_lm_head_capability),
                      "tiny_graph_integrated_lm_head_adamw": integrated_tiny_lm_head_adamw_capability(available=graph_lm_head_adamw, runtime_capability=graph_lm_head_capability),
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
@@ -735,6 +761,29 @@ class BackendSession:
         code = fn(handle, *pointers, len(tokens), learning_rate)
         if code != 0:
             raise BackendError(f"integrated graph LM-head SGD returned {code}")
+
+    def _train_tiny_graph_group_sgd(self, group: str, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError(f"integrated Tiny {group} SGD requires equal 1..128 token/target/mask values")
+        if learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive")
+        fn = getattr(self._native(), f"spaceslug_tiny_forward_train_{group}_sgd", None)
+        if fn is None:
+            raise BackendError(f"integrated graph {group} SGD ABI unavailable")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, len(tokens), learning_rate)
+        if code != 0:
+            raise BackendError(f"integrated graph {group} SGD returned {code}")
+
+    def train_tiny_graph_output_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
+        """Run one graph-owned Tiny output-projection SGD step."""
+        self._train_tiny_graph_group_sgd("output", handle, tokens, targets, masks, learning_rate)
+
+    def train_tiny_graph_qkv_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
+        """Run one graph-owned Tiny combined-QKV SGD step."""
+        self._train_tiny_graph_group_sgd("qkv", handle, tokens, targets, masks, learning_rate)
 
     def train_tiny_graph_lm_head_adamw(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8, weight_decay: float = 0.0) -> None:
         """Run graph-owned Tiny LM-head AdamW when all runtime symbols exist."""
