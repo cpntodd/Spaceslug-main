@@ -41,7 +41,15 @@ def gpu_lora_training_plan() -> dict[str, Any]:
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB", "adamw_m", "adamw_v"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizers": ["sgd", "adamw"], "optimizer": "adamw", "base_weights": "frozen", "window_streaming": True, "dataset_device_resident": False}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+
+
+def persistent_tiny_capability() -> dict[str, Any]:
+    """Describe the PersistentTiny Python/native boundary."""
+    boundary = persistent_graph_boundary()
+    return {"status": boundary["status"], "optimizers": ["sgd", "adamw"], "window_streaming": True,
+            "native_adamw_state_checkpoint": True, "dataset_device_resident": False,
+            "host_staging": True, "contract": boundary["contract"]}
 
 
 class PersistentGpuLoRATrainer:
@@ -121,23 +129,39 @@ class PersistentTinyTrainer:
     def train_windows(self, tokens: list[int], targets: list[int], window_length: int,
                       mask: list[int] | None = None, *, start_window: int | None = None,
                       max_windows: int | None = None, batch_windows: int | None = None) -> dict[str, Any]:
-        if self.optimizer != "sgd":
-            raise NotImplementedError("train_windows currently supports the native SGD window path only")
         start = self.window_position if start_window is None else start_window
         batches = self.iter_window_batches(tokens, targets, window_length, mask,
                                            start_window=start, max_windows=max_windows,
                                            batch_windows=batch_windows)
         losses: list[Any] = []
         processed = 0
-        self.backend.begin_tiny_accumulation(self.handle)
-        for position, sample, bt, by, bm in batches:
-            result = self.backend.accumulate_tiny_windows(self.handle, bt, by, bm, window_length)
-            losses.extend(result)
-            processed += len(bt) // window_length
-        if not processed:
-            raise ValueError("max_windows must select at least one window")
-        self.backend.finalize_tiny_sgd(self.handle, self.learning_rate,
-                                       float(sum(mask or [1] * len(tokens)) or 1))
+        selected_mask = 0
+        if self.optimizer == "adamw":
+            # Keep dataset staging explicit, while using the native per-token AdamW
+            # binding.  A single begin/finalize spans all selected windows so the
+            # optimizer step and its moments are identical to one contiguous stream.
+            self.backend.begin_tiny_adamw(self.handle)
+            for position, sample, bt, by, bm in batches:
+                for offset, (token, target, included) in enumerate(zip(bt, by, bm)):
+                    result = self.backend.accumulate_tiny_adamw(self.handle, token, offset % window_length, target, included)
+                    losses.append(result["loss"][0])
+                    selected_mask += int(included)
+                processed += len(bt) // window_length
+            if not processed:
+                raise ValueError("max_windows must select at least one window")
+            self.backend.finalize_tiny_adamw(self.handle, self.learning_rate, self.beta1,
+                                             self.beta2, self.epsilon, self.weight_decay,
+                                             float(selected_mask or 1))
+        else:
+            self.backend.begin_tiny_accumulation(self.handle)
+            for position, sample, bt, by, bm in batches:
+                result = self.backend.accumulate_tiny_windows(self.handle, bt, by, bm, window_length)
+                losses.extend(result)
+                processed += len(bt) // window_length
+            if not processed:
+                raise ValueError("max_windows must select at least one window")
+            selected_mask = sum(mask or [1] * len(tokens))
+            self.backend.finalize_tiny_sgd(self.handle, self.learning_rate, float(selected_mask or 1))
         self.step_index += 1
         self.window_position = start + processed
         self.sample_position = self.window_position * window_length
@@ -145,7 +169,7 @@ class PersistentTinyTrainer:
                 "window_length": window_length, "sample_position": self.sample_position,
                 "window_position": self.window_position, "gpu_execution": True,
                 "device_resident": True, "dataset_device_resident": False,
-                "host_staging": True, "optimizer": "sgd",
+                "host_staging": True, "optimizer": self.optimizer,
                 "contract": {"hidden": 64, "vocab": 259, "rank": self.adapter.rank}}
 
     def checkpoint(self, path: str | Path) -> None:
@@ -156,8 +180,9 @@ class PersistentTinyTrainer:
             "sample_position": self.sample_position, "window_position": self.window_position,
             "dataset_device_resident": False}, "adapter": self.readback_adapter()}
         if self.optimizer == "adamw":
-            try: data["optimizer_state"] = self.readback_optimizer_state()
-            except (AttributeError, NotImplementedError): pass
+            # AdamW checkpoints are not resumable without moments; fail closed
+            # instead of silently producing a weights-only checkpoint.
+            data["optimizer_state"] = self.readback_optimizer_state()
         Path(path).write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
 
     @classmethod

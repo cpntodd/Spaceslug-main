@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 
-from spaceslug.gpu_lora_training import PersistentTinyTrainer
+from spaceslug.gpu_lora_training import PersistentTinyTrainer, persistent_tiny_capability
 
 
 class _Backend:
@@ -93,13 +93,57 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             resumed.close()
         trainer.close()
 
+    def test_adamw_windows_stage_tokens_and_checkpoint_state(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend(); trainer = PersistentTinyTrainer(backend, Model(), Adapter(), 0.25, optimizer="adamw", weight_decay=0.01)
+        report = trainer.train_windows([1, 2, 3, 4], [5, 6, 7, 8], 2, [1, 0, 1, 1], batch_windows=1)
+        self.assertEqual(report["optimizer"], "adamw")
+        self.assertTrue(report["host_staging"])
+        self.assertEqual(report["window_position"], 2)
+        self.assertIn(("adamw_finalize", 0.25, 0.9, 0.999, 1e-8, 0.01, 3.0), backend.calls)
+        with tempfile.TemporaryDirectory() as root:
+            path = root + "/adamw.json"; trainer.checkpoint(path)
+            with open(path) as checkpoint_file:
+                payload = json.load(checkpoint_file)
+            self.assertIn("optimizer_state", payload)
+            resumed = PersistentTinyTrainer.resume(_Backend(), Model(), Adapter(), path)
+            self.assertEqual((resumed.step_index, resumed.window_position, resumed.sample_position), (1, 2, 4))
+            self.assertIn("adamw_restore", resumed.backend.calls)
+            resumed.close()
+        trainer.close()
+
+    def test_adamw_stream_resume_matches_uninterrupted_window_positions(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        data = (list(range(8)), list(range(10, 18)), [1] * 8)
+        full_backend = _Backend(); full = PersistentTinyTrainer(full_backend, Model(), Adapter(), optimizer="adamw")
+        full.train_windows(data[0], data[1], 2, data[2], batch_windows=1)
+        split_backend = _Backend(); split = PersistentTinyTrainer(split_backend, Model(), Adapter(), optimizer="adamw")
+        split.train_windows(data[0], data[1], 2, data[2], batch_windows=1, max_windows=2)
+        with tempfile.TemporaryDirectory() as root:
+            path = root + "/stream.json"; split.checkpoint(path)
+            resumed = PersistentTinyTrainer.resume(_Backend(), Model(), Adapter(), path)
+            resumed.train_windows(data[0], data[1], 2, data[2], batch_windows=1)
+            self.assertEqual(resumed.window_position, full.window_position)
+            self.assertEqual(resumed.sample_position, full.sample_position)
+            resumed.close()
+        split.close(); full.close()
+
+    def test_persistent_tiny_capability_metadata(self):
+        capability = persistent_tiny_capability()
+        self.assertEqual(capability["optimizers"], ["sgd", "adamw"])
+        self.assertTrue(capability["native_adamw_state_checkpoint"])
+        self.assertFalse(capability["dataset_device_resident"])
+
     def test_streaming_capability_boundaries_are_explicit(self):
         class Model: hidden_size, vocab_size = 64, 259
         class Adapter: hidden_size, rank = 64, 4
         with self.assertRaises(ValueError):
             list(PersistentTinyTrainer.iter_window_batches([1, 2], [3, 4], 2, max_windows=-1))
         trainer = PersistentTinyTrainer(_Backend(), Model(), Adapter(), optimizer="adamw")
-        with self.assertRaises(NotImplementedError): trainer.train_windows([1, 2], [3, 4], 2)
+        report = trainer.train_windows([1, 2], [3, 4], 2)
+        self.assertEqual(report["optimizer"], "adamw")
         trainer.close()
 
     def test_unsupported_shape_is_explicit(self):
