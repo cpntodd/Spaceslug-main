@@ -63,6 +63,25 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertFalse(capability["retained_training"])
         self.assertFalse(capability["standalone_api"])
 
+    def test_adamw_capability_matrix_exposes_only_lm_head_and_output(self):
+        lm_head = integrated_tiny_group_adamw_capability(group="lm_head", available=True)
+        output = integrated_tiny_group_adamw_capability(group="output", available=True)
+        self.assertEqual(lm_head["status"], "available")
+        self.assertEqual(output["status"], "available")
+        self.assertTrue(lm_head["integrated_graph_adamw"])
+        self.assertTrue(output["integrated_graph_adamw"])
+        with self.assertRaises(ValueError):
+            integrated_tiny_group_adamw_capability(group="qkv", available=True)
+
+    def test_qkv_adamw_is_explicitly_unavailable_even_when_qkv_sgd_is_available(self):
+        qkv_sgd = integrated_tiny_lm_head_capability(group="qkv", available=True)
+        self.assertEqual(qkv_sgd["status"], "available")
+        self.assertFalse(qkv_sgd["integrated_graph_adamw"])
+        self.assertTrue(qkv_sgd["adamw_unsupported"])
+        self.assertEqual(qkv_sgd["adamw_return_code"], -4)
+        runtime = Path(__file__).parents[2] / "vulkan-runtime"
+        self.assertNotIn("tiny_graph_integrated_qkv_adamw", BackendSession(runtime, "test").capabilities().metadata)
+
     def test_backend_reports_conditional_integrated_sgd_and_adamw_boundary(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
