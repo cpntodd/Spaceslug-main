@@ -26,6 +26,8 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         rank, rows = 4, 3
         trainer = PersistentGpuLoRATrainer(backend, [0.01] * (64 * rank), [0.02] * (rank * 64), rank, 0.01, rows)
         report = trainer.step([0.03] * (rows * 64), [0.04] * (rows * 64))
+        second = trainer.step([0.03] * (rows * 64), [0.04] * (rows * 64))
+        self.assertEqual(second["step"], 2)
         self.assertTrue(report["gpu_execution"])
         self.assertTrue(report["device_resident"])
         self.assertEqual(report["parity"], "persistent-session")

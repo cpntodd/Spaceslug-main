@@ -41,21 +41,28 @@ def gpu_lora_training_plan() -> dict[str, Any]:
 
 
 class PersistentGpuLoRATrainer:
-    """Persistent native LoRA tensor session; keeps A/B device-resident per session."""
-    def __init__(self, backend: Any, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int) -> None:
-        self.backend, self.a, self.b, self.rank, self.learning_rate, self.rows = backend, list(a), list(b), rank, learning_rate, rows
-        if not hasattr(backend, "execute_lora_session_step"):
-            raise ValueError("persistent GPU LoRA session is unavailable")
+    """Persistent native LoRA tensor session; keeps A/B device-resident across steps."""
+    def __init__(self, backend: Any, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int, step: int = 0) -> None:
+        self.backend, self.a, self.b, self.rank, self.learning_rate, self.rows, self.step_index = backend, list(a), list(b), rank, learning_rate, rows, step
+        self.handle = backend.open_lora_session(self.a, self.b, rank, learning_rate, rows)
 
     def step(self, x: list[float], dy: list[float]) -> dict[str, Any]:
-        result = self.backend.execute_lora_session_step(x, dy, self.a, self.b, self.rank, self.learning_rate)
-        if result.status != "ok":
-            raise RuntimeError(result.metrics.get("reason", "persistent GPU LoRA step failed"))
-        self.a, self.b = result.output["a"], result.output["b"]
-        return {"status": result.status, "gpu_execution": True, "device_resident": True, "parity": result.metrics["parity"], "y": result.output["y"]}
+        y = self.backend.step_lora_session(self.handle, x, dy, self.rows)
+        self.step_index += 1
+        return {"status": "ok", "gpu_execution": True, "device_resident": True, "parity": "persistent-session", "step": self.step_index, "y": y}
 
     def checkpoint(self, path: str | Path) -> None:
-        save_gpu_lora_checkpoint(path, GpuLoRATrainingState(step=0, learning_rate=self.learning_rate, device_resident=True), {"rank": self.rank, "a": self.a, "b": self.b})
+        self.a, self.b = self.backend.readback_lora_session(self.handle, self.rank)
+        save_gpu_lora_checkpoint(path, GpuLoRATrainingState(step=self.step_index, learning_rate=self.learning_rate, device_resident=True), {"rank": self.rank, "a": self.a, "b": self.b})
+
+    def close(self) -> None:
+        if self.handle is not None:
+            self.backend.close_lora_session(self.handle)
+            self.handle = None
+
+    def __del__(self) -> None:
+        try: self.close()
+        except Exception: pass
 
 
 class GpuLoRATrainer:

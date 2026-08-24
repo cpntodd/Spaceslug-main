@@ -446,6 +446,36 @@ class BackendSession:
         if code != 0: raise BackendError(f"native projection backward returned {code}")
         return list(result)
 
+    def open_lora_session(self, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int) -> ctypes.c_void_p:
+        native = self._native()
+        if not hasattr(native, "spaceslug_lora_session_create"):
+            raise BackendError("persistent LoRA session ABI unavailable")
+        import array
+        aa, bb = array.array("f", a), array.array("f", b)
+        handle = ctypes.c_void_p()
+        code = native.spaceslug_lora_session_create(rows, rank, learning_rate, (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb), ctypes.byref(handle))
+        if code != 0 or not handle.value: raise BackendError(f"persistent session create returned {code}")
+        return handle
+
+    def step_lora_session(self, handle: ctypes.c_void_p, x: list[float], dy: list[float], rows: int) -> list[float]:
+        native = self._native()
+        import array
+        xx, dd, yy = array.array("f", x), array.array("f", dy), array.array("f", [0.0] * (rows * 64))
+        code = native.spaceslug_lora_session_step(handle, (ctypes.c_float * len(xx)).from_buffer(xx), (ctypes.c_float * len(dd)).from_buffer(dd), (ctypes.c_float * len(yy)).from_buffer(yy))
+        if code != 0: raise BackendError(f"persistent session step returned {code}")
+        return yy.tolist()
+
+    def readback_lora_session(self, handle: ctypes.c_void_p, rank: int) -> tuple[list[float], list[float]]:
+        native = self._native()
+        import array
+        aa, bb = array.array("f", [0.0] * (64 * rank)), array.array("f", [0.0] * (rank * 64))
+        code = native.spaceslug_lora_session_readback(handle, (ctypes.c_float * len(aa)).from_buffer(aa), (ctypes.c_float * len(bb)).from_buffer(bb))
+        if code != 0: raise BackendError(f"persistent session readback returned {code}")
+        return aa.tolist(), bb.tolist()
+
+    def close_lora_session(self, handle: ctypes.c_void_p) -> None:
+        self._native().spaceslug_lora_session_destroy(handle)
+
     def execute_lora_session_step(self, x: list[float], dy: list[float], a: list[float], b: list[float], rank: int, learning_rate: float) -> ExecutionResult:
         if len(x) == 0 or len(x) % 64 or len(dy) != len(x) or len(a) != 64 * rank or len(b) != rank * 64 or rank < 1 or rank > 8:
             return ExecutionResult("not-run", "lora_session_step", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "persistent session requires X/dY [M,64] and A/B factors"}, {})
