@@ -11,9 +11,12 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(capability["status"], "implemented-standalone")
         self.assertTrue(capability["native_binding"])
         self.assertFalse(capability["forward_integration"])
+        self.assertFalse(capability["tiny_graph_integration"])
         self.assertFalse(capability["dataset_integration"])
         self.assertEqual(capability["dtype"], "fp32")
-        self.assertEqual(capability["trainable_parameter_groups"], ["lm_head"])
+        self.assertEqual(capability["optimizer"], "sgd")
+        self.assertEqual(capability["implemented_subsets"], ["lm_head", "output_projection", "combined_qkv"])
+        self.assertEqual(capability["trainable_parameter_groups"], ["lm_head", "output_projection", "combined_qkv"])
         self.assertFalse(capability["full_base_training"])
         self.assertFalse(capability["dataset_training"])
         self.assertIn("attention_qkv", capability["unsupported_full_base_groups"])
@@ -24,16 +27,21 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(plan["dimensions"], {"hidden_size": 64, "vocab_size": 259})
         self.assertIn("native_lm_head_backward", plan["steps"])
         self.assertIn("caller_supplied_projected_activations", plan["steps"])
+        self.assertEqual(plan["optimizer"], "sgd")
+        self.assertFalse(plan["tiny_graph_integration"])
+        self.assertEqual(plan["implemented_subsets"], ["lm_head", "output_projection", "combined_qkv"])
         self.assertIn("native_full_base_backward", plan["unsupported_steps"])
         self.assertFalse(plan["full_base_training"])
 
     def test_backend_exposes_same_metadata_without_native_claim(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
-        capability = metadata["native_fp32_lm_head_only_base_training"]
+        capability = metadata["native_fp32_base_training_subsets"]
+        self.assertIs(capability, metadata["native_fp32_lm_head_only_base_training"])
         self.assertTrue(capability["native_binding"])
         self.assertFalse(capability["forward_integration"])
-        self.assertEqual(capability["trainable_parameter_groups"], ["lm_head"])
+        self.assertFalse(capability["tiny_graph_integration"])
+        self.assertEqual(capability["trainable_parameter_groups"], ["lm_head", "output_projection", "combined_qkv"])
         self.assertFalse(capability["full_base_training"])
 
 

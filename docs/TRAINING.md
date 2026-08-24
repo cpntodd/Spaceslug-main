@@ -68,11 +68,11 @@ For the same tiny model and batch, CPU and Vulkan must agree on:
 
 Tolerances must be defined per dtype and reduction order. Exact token identity is not a sufficient training metric.
 
-## Native FP32 LM-head-only base-training boundary
+## Native FP32 standalone base-training subsets
 
-The repository exposes a bounded native FP32 LM-head-only path via `native_fp32_lm_head_capability()` and `native_fp32_lm_head_training_plan()`. The runtime ABI computes LM-head gradients and applies SGD using caller-supplied projected Tiny activations and dlogits; the only trainable group is `lm_head`. The backbone groups (embeddings, attention QKV/output, feed-forward, normalization, and positional embeddings) remain unsupported for native base training.
+The native runtime now exposes three bounded FP32 base-training subsets: **LM-head**, **output projection**, and **combined QKV**. Each uses **SGD** and caller-supplied activations/states plus upstream gradients. The capability metadata is available through `native_fp32_lm_head_capability()` and the LM-head-compatible plan through `native_fp32_lm_head_training_plan()`.
 
-This is **implemented standalone**, not integrated into Tiny forward activations, Tiny loss, or dataset training. The native binding does not produce the activations or dlogits itself; CPU remains authoritative for the integrated training path. The plan must not be interpreted as full-base training: `full_base_training` is false and full-base backward/update are explicitly listed as unsupported. Tests assert these boundaries.
+These are **implemented standalone** native ABIs: none is integrated into Tiny forward activations, the Tiny command graph, Tiny loss, or dataset training. They are independent composition primitives, not a complete transformer trainer. The remaining backbone groups (embeddings, feed-forward, normalization, and positional embeddings) remain unsupported, and `full_base_training` is false; do not interpret these three subsets as full base training. CPU remains authoritative for the integrated training path, and tests assert these boundaries.
 
 ## Spaceslug-0.5B policy
 
