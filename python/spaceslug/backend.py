@@ -91,6 +91,19 @@ class BackendSession:
                     attention_backward = self._library.spaceslug_attention_causal_backward
                     attention_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
                     attention_backward.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_capability"):
+                    tiny_capability = self._library.spaceslug_tiny_forward_capability
+                    tiny_capability.restype = ctypes.c_char_p
+                    tiny_forward = self._library.spaceslug_tiny_forward
+                    tiny_forward.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
+                    tiny_forward.restype = ctypes.c_int
+                    tiny_destroy = self._library.spaceslug_tiny_forward_destroy
+                    tiny_destroy.argtypes = [ctypes.c_void_p]
+                    tiny_destroy.restype = None
+                if hasattr(self._library, "spaceslug_lora_session_token_step"):
+                    token_step = self._library.spaceslug_lora_session_token_step
+                    token_step.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+                    token_step.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_session_create"):
                     session_create = self._library.spaceslug_lora_session_create
                     session_create.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_float, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_void_p)]
@@ -445,6 +458,19 @@ class BackendSession:
             else: os.environ["VK_ICD_FILENAMES"] = old_icd
         if code != 0: raise BackendError(f"native projection backward returned {code}")
         return list(result)
+
+    def tiny_forward_capability(self) -> str:
+        native = self._native()
+        return native.spaceslug_tiny_forward_capability().decode("utf-8") if hasattr(native, "spaceslug_tiny_forward_capability") else "unsupported"
+
+    def execute_tiny_persistent_forward(self, handle: ctypes.c_void_p, tokens: list[int], final_only: bool = False) -> ExecutionResult:
+        native = self._native()
+        if not hasattr(native, "spaceslug_tiny_forward"): return ExecutionResult("not-run", "tiny_forward_persistent", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "not-run", "reason": "persistent Tiny forward ABI unavailable"}, {})
+        import array
+        tt, out = array.array("I", tokens), array.array("f", [0.0] * ((1 if final_only else len(tokens)) * 259))
+        code = native.spaceslug_tiny_forward(handle, (ctypes.c_uint32 * len(tt)).from_buffer(tt), len(tt), (ctypes.c_float * len(out)).from_buffer(out), int(final_only))
+        if code != 0: raise BackendError(f"persistent Tiny forward returned {code}")
+        return ExecutionResult("ok", "tiny_forward_persistent", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "persistent-forward", "gpu_execution": True, "device_resident": True}, {"logits": out.tolist()})
 
     def open_lora_session(self, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int) -> ctypes.c_void_p:
         native = self._native()
