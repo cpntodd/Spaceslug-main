@@ -160,6 +160,27 @@ class BackendSession:
                     train_lm_head_adamw = self._library.spaceslug_tiny_forward_train_lm_head_adamw
                     train_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
                     train_lm_head_adamw.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_base_checkpoint_create"):
+                    checkpoint_create = self._library.spaceslug_tiny_base_checkpoint_create
+                    checkpoint_create.argtypes = []
+                    checkpoint_create.restype = ctypes.c_void_p
+                    checkpoint_destroy = self._library.spaceslug_tiny_base_checkpoint_destroy
+                    checkpoint_destroy.argtypes = [ctypes.c_void_p]
+                    checkpoint_destroy.restype = None
+                    readback_checkpoint = self._library.spaceslug_tiny_forward_readback_base_checkpoint
+                    readback_checkpoint.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+                    readback_checkpoint.restype = ctypes.c_int
+                    update_checkpoint = self._library.spaceslug_tiny_forward_update_base_checkpoint
+                    update_checkpoint.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+                    update_checkpoint.restype = ctypes.c_int
+                    for name in ("group_mask", "adamw_step", "profile_rank"):
+                        function = getattr(self._library, f"spaceslug_tiny_base_checkpoint_{name}")
+                        function.argtypes = [ctypes.c_void_p]
+                        function.restype = ctypes.c_uint64 if name == "adamw_step" else ctypes.c_uint32
+                    for name in ("float_count", "weights", "qkv_weights", "adamw_m", "adamw_v"):
+                        function = getattr(self._library, f"spaceslug_tiny_base_checkpoint_{name}")
+                        function.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+                        function.restype = ctypes.c_uint32 if name == "float_count" else ctypes.POINTER(ctypes.c_float)
                 if hasattr(self._library, "spaceslug_tiny_forward_create_dataset_batch"):
                     function = self._library.spaceslug_tiny_forward_create_dataset_batch
                     function.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
@@ -814,6 +835,75 @@ class BackendSession:
         self._tiny_arrays = getattr(self, "_tiny_arrays", {})
         self._tiny_arrays[int(handle)] = arrays
         return ctypes.c_void_p(handle)
+
+    def readback_tiny_graph_base_checkpoint(self, handle: ctypes.c_void_p) -> dict[str, Any]:
+        """Read the graph-owned base checkpoint ABI into JSON-ready metadata."""
+        native = self._native()
+        required = ("spaceslug_tiny_base_checkpoint_create", "spaceslug_tiny_forward_readback_base_checkpoint")
+        if not all(hasattr(native, name) for name in required):
+            raise BackendError("graph-owned base checkpoint ABI unavailable")
+        checkpoint = native.spaceslug_tiny_base_checkpoint_create()
+        if not checkpoint:
+            raise BackendError("graph-owned base checkpoint allocation failed")
+        try:
+            code = native.spaceslug_tiny_forward_readback_base_checkpoint(handle, checkpoint)
+            if code != 0:
+                raise BackendError(f"graph-owned base checkpoint readback returned {code}")
+            mask = int(native.spaceslug_tiny_base_checkpoint_group_mask(checkpoint))
+            result: dict[str, Any] = {"version": 1, "group_mask": mask,
+                "adamw_step": int(native.spaceslug_tiny_base_checkpoint_adamw_step(checkpoint)),
+                "profile_rank": int(native.spaceslug_tiny_base_checkpoint_profile_rank(checkpoint))}
+            counts = {"lm_head": (1, 64 * 320), "output": (2, 64 * 64), "qkv": (4, 64 * 64)}
+            for group, bit in (("lm_head", 1), ("output", 2), ("qkv", 4)):
+                if not mask & bit:
+                    continue
+                if group == "qkv":
+                    result[group] = []
+                    for projection in range(3):
+                        pointer = native.spaceslug_tiny_base_checkpoint_qkv_weights(checkpoint, projection)
+                        result[group].append([pointer[i] for i in range(64 * 64)])
+                else:
+                    count = int(native.spaceslug_tiny_base_checkpoint_float_count(checkpoint, bit)) or counts[group][1]
+                    pointer = native.spaceslug_tiny_base_checkpoint_weights(checkpoint, bit)
+                    result[group] = [pointer[i] for i in range(count)]
+                    if group == "lm_head" or group == "output":
+                        for state_name, symbol in (("m", "adamw_m"), ("v", "adamw_v")):
+                            state_pointer = getattr(native, f"spaceslug_tiny_base_checkpoint_{symbol}")(checkpoint, bit)
+                            if state_pointer:
+                                result[f"{group}_{state_name}"] = [state_pointer[i] for i in range(count)]
+            return result
+        finally:
+            native.spaceslug_tiny_base_checkpoint_destroy(checkpoint)
+
+    def update_tiny_graph_base_checkpoint(self, handle: ctypes.c_void_p, checkpoint: dict[str, Any]) -> None:
+        """Restore graph-owned weights and supported AdamW state from metadata."""
+        native = self._native()
+        if not all(hasattr(native, name) for name in ("spaceslug_tiny_forward_import_base_train_lm_head", "spaceslug_tiny_forward_import_base_train_output")):
+            raise BackendError("graph-owned base checkpoint restore ABI unavailable")
+        mask = int(checkpoint.get("group_mask", 0))
+        import array
+        def floats(values: list[float]):
+            return (ctypes.c_float * len(values))(*values)
+        if mask & 1 and checkpoint.get("lm_head"):
+            values = floats(checkpoint["lm_head"]); code = native.spaceslug_tiny_forward_import_base_train_lm_head(handle, values)
+            if code != 0: raise BackendError(f"LM-head checkpoint restore returned {code}")
+        if mask & 2 and checkpoint.get("output"):
+            values = floats(checkpoint["output"]); code = native.spaceslug_tiny_forward_import_base_train_output(handle, values)
+            if code != 0: raise BackendError(f"output checkpoint restore returned {code}")
+        if mask & 4:
+            values = [floats(values) for values in checkpoint.get("qkv", [])]
+            fn = getattr(native, "spaceslug_tiny_forward_import_base_train_qkv", None)
+            if fn is None or len(values) != 3: raise BackendError("QKV checkpoint restore ABI unavailable")
+            code = fn(handle, *values)
+            if code != 0: raise BackendError(f"QKV checkpoint restore returned {code}")
+        # AdamW is intentionally limited to LM-head/output; QKV remains SGD-only.
+        for group, count in (("lm_head", 64 * 320), ("output", 64 * 64)):
+            if mask & (1 if group == "lm_head" else 2) and all(f"{group}_{key}" in checkpoint for key in ("m", "v")):
+                fn = getattr(native, f"spaceslug_tiny_forward_update_base_train_{group}_adamw_state", None)
+                if fn is not None:
+                    values = [floats(checkpoint[group]), floats(checkpoint[f"{group}_m"]), floats(checkpoint[f"{group}_v"])]
+                    code = fn(handle, *values, int(checkpoint.get("adamw_step", 0)))
+                    if code != 0: raise BackendError(f"{group} AdamW checkpoint restore returned {code}")
 
     def train_tiny_graph_lm_head_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
         """Run one graph-owned Tiny LM-head SGD step when the runtime exports it."""

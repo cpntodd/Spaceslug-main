@@ -61,7 +61,7 @@ The IR must not contain Vulkan descriptors, shader names, Colibri container assu
 
 ## Backend contract
 
-Backends expose capabilities and explicit results for unsupported operations. Unsupported work may fall back to CPU only when the plan permits it and the fallback is recorded in metrics.
+Backends expose capabilities and explicit results for unsupported operations. Unsupported work may fall back to CPU only when the plan permits it and the fallback is recorded in metrics. The optional Tiny graph-owned base checkpoint ABI snapshots/restores LM-head, output, and QKV weights, and LM-head/output AdamW moments plus step. QKV AdamW is intentionally unsupported; dataset storage and retained training buffers never enter the checkpoint.
 
 The Spaceslug backend must provide asynchronous submission/events, explicit tensor transfers, memory budget reporting, and operation-level profiling. Backend selection is per execution plan or request, not a process-global mutable setting.
 

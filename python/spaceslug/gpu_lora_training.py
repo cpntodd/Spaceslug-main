@@ -251,6 +251,32 @@ class PersistentTinyTrainer:
                 "host_staging": True, "optimizer": self.optimizer,
                 "contract": {"hidden": 64, "vocab": 259, "rank": self.adapter.rank}}
 
+    def checkpoint_base(self, path: str | Path) -> None:
+        """Save graph-owned base weights/state; dataset and retained buffers stay host-owned."""
+        readback = getattr(self.backend, "readback_tiny_graph_base_checkpoint", None)
+        if readback is None:
+            raise BackendError("graph-owned base checkpoint ABI unavailable")
+        payload = readback(self.handle)
+        payload.update({"format": "spaceslug-tiny-graph-base-checkpoint", "schema_version": 1,
+                        "dataset_device_resident": False, "retained_training": False,
+                        "qkv_adamw_unsupported": True})
+        Path(path).write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+
+    @classmethod
+    def resume_base(cls, backend: Any, model: Any, adapter: Any, path: str | Path, **kwargs: Any) -> "PersistentTinyTrainer":
+        """Create a trainer and restore a graph-owned base checkpoint."""
+        data = json.loads(Path(path).read_text())
+        if data.get("format") != "spaceslug-tiny-graph-base-checkpoint" or data.get("schema_version") != 1:
+            raise ValueError("unsupported graph-owned base checkpoint")
+        if data.get("dataset_device_resident") or data.get("retained_training"):
+            raise ValueError("graph-owned base checkpoint cannot contain dataset or retained state")
+        trainer = cls(backend, model, adapter, **kwargs)
+        restore = getattr(backend, "update_tiny_graph_base_checkpoint", None)
+        if restore is None:
+            trainer.close(); raise BackendError("graph-owned base checkpoint ABI unavailable")
+        restore(trainer.handle, data)
+        return trainer
+
     def checkpoint(self, path: str | Path) -> None:
         """Save adapter and resumable stream metadata; dataset remains host-owned."""
         data: dict[str, Any] = {"schema_version": 1, "training": {

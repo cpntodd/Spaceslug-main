@@ -31,6 +31,13 @@ class _Backend:
     def readback_tiny_adapters(self, handle): return self.adapters
     def update_tiny_adapters(self, handle, values): self.adapters = values; self.calls.append("restore")
     def close_tiny_persistent(self, handle): self.calls.append("close")
+    def readback_tiny_graph_base_checkpoint(self, handle):
+        self.calls.append("base_readback")
+        return {"group_mask": 3, "profile_rank": 4, "adamw_step": 2,
+                "lm_head": [1.0], "lm_head_m": [0.1], "lm_head_v": [0.2],
+                "output": [2.0], "output_m": [0.3], "output_v": [0.4]}
+    def update_tiny_graph_base_checkpoint(self, handle, checkpoint):
+        self.calls.append(("base_restore", checkpoint["group_mask"], checkpoint["qkv_adamw_unsupported"]))
     def execute_tiny_fixed_retained_loss(self, handle, tokens, targets, mask):
         self.calls.append(("fixed_forward_loss", len(tokens), len(targets), len(mask)))
         class Result:
@@ -54,6 +61,23 @@ class _Backend:
 
 
 class PersistentTinyTrainerTest(unittest.TestCase):
+    def test_graph_owned_base_checkpoint_round_trip_metadata_and_boundaries(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        with tempfile.TemporaryDirectory() as directory:
+            path = directory + "/base.json"
+            backend = _Backend()
+            trainer = PersistentTinyTrainer(backend, Model(), Adapter())
+            trainer.checkpoint_base(path)
+            payload = json.loads(open(path).read())
+            self.assertEqual(payload["format"], "spaceslug-tiny-graph-base-checkpoint")
+            self.assertFalse(payload["dataset_device_resident"])
+            self.assertFalse(payload["retained_training"])
+            self.assertTrue(payload["qkv_adamw_unsupported"])
+            resumed = PersistentTinyTrainer.resume_base(_Backend(), Model(), Adapter(), path)
+            self.assertIn(("base_restore", 3, True), resumed.backend.calls)
+            trainer.close(); resumed.close()
+
     def test_fixed_contract_accumulates_then_finalizes(self):
         class Model: hidden_size, vocab_size = 64, 259
         class Adapter: hidden_size, rank = 64, 4
