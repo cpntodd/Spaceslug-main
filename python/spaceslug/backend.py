@@ -99,6 +99,25 @@ class BackendSession:
                     tiny_forward.restype = ctypes.c_int
                     tiny_destroy = self._library.spaceslug_tiny_forward_destroy
                     tiny_destroy.argtypes = [ctypes.c_void_p]
+                     if hasattr(self._library, "spaceslug_tiny_forward_create_full"):
+                         create_full = self._library.spaceslug_tiny_forward_create_full
+                         create_full.argtypes = [ctypes.POINTER(ctypes.c_float)] * 7
+                         create_full.restype = ctypes.c_void_p
+                         begin_accumulation = self._library.spaceslug_tiny_forward_begin_lora_accumulation
+                         begin_accumulation.argtypes = [ctypes.c_void_p]
+                         begin_accumulation.restype = ctypes.c_int
+                         token_backward_accumulate = self._library.spaceslug_tiny_forward_token_step_training_backward_accumulate
+                         token_backward_accumulate.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32] + [ctypes.POINTER(ctypes.c_float)] * 9
+                         token_backward_accumulate.restype = ctypes.c_int
+                         finalize_sgd = self._library.spaceslug_tiny_forward_finalize_lora_sgd
+                         finalize_sgd.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float]
+                         finalize_sgd.restype = ctypes.c_int
+                         readback_adapters = self._library.spaceslug_tiny_forward_readback_lora_adapters
+                         readback_adapters.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 8
+                         readback_adapters.restype = ctypes.c_int
+                         update_adapters = self._library.spaceslug_tiny_forward_update_lora_adapters
+                         update_adapters.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 8
+                         update_adapters.restype = ctypes.c_int
                     tiny_destroy.restype = None
                 if hasattr(self._library, "spaceslug_lora_session_token_step"):
                     token_step = self._library.spaceslug_lora_session_token_step
@@ -458,6 +477,62 @@ class BackendSession:
             else: os.environ["VK_ICD_FILENAMES"] = old_icd
         if code != 0: raise BackendError(f"native projection backward returned {code}")
         return list(result)
+
+    def create_tiny_persistent_full(self, model: Any, adapter: Any) -> ctypes.c_void_p:
+        """Create the fixed Tiny graph; only H=64, V=259, rank=4 is supported."""
+        if (model.hidden_size, model.vocab_size, adapter.hidden_size, adapter.rank) != (64, 259, 64, 4):
+            raise BackendError("persistent Tiny contract requires H=64, V=259, rank=4")
+        from .positional_encoding import sinusoidal_positions
+        import array
+        flat = lambda matrix: [value for row in matrix for value in row]
+        arrays = [array.array("f", flat(model.embedding)), array.array("f", flat(sinusoidal_positions(128, 64))),
+                  *[array.array("f", flat(getattr(model, name))) for name in ("query", "key", "value", "output")],
+                  array.array("f", [model.lm_head[r][c] if c < model.vocab_size else 0.0 for r in range(64) for c in range(320)])]
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        handle = self._native().spaceslug_tiny_forward_create_full(*pointers)
+        if not handle:
+            raise BackendError("persistent Tiny graph creation failed")
+        self._tiny_arrays = getattr(self, "_tiny_arrays", {})
+        self._tiny_arrays[int(handle)] = arrays
+        return ctypes.c_void_p(handle)
+
+    def begin_tiny_accumulation(self, handle: ctypes.c_void_p) -> None:
+        code = self._native().spaceslug_tiny_forward_begin_lora_accumulation(handle)
+        if code != 0: raise BackendError(f"begin Tiny accumulation returned {code}")
+
+    def accumulate_tiny_backward(self, handle: ctypes.c_void_p, token: int, position: int, target: int, mask: int) -> dict[str, Any]:
+        import array
+        outputs = [array.array("f", [0.0] * n) for n in (1, 320, 64, 64, 64, 64, 64, 64, 64)]
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in outputs]
+        code = self._native().spaceslug_tiny_forward_token_step_training_backward_accumulate(handle, token, position, target, mask, *pointers)
+        if code != 0: raise BackendError(f"Tiny backward accumulation returned {code}")
+        return {"loss": outputs[0].tolist(), "dlogits": outputs[1].tolist(), "dprojected": outputs[2].tolist(), "dquery": outputs[3].tolist(), "dkey": outputs[4].tolist(), "dvalue": outputs[5].tolist(), "dcontext": outputs[6].tolist(), "dstates": outputs[7].tolist()}
+
+    def finalize_tiny_sgd(self, handle: ctypes.c_void_p, learning_rate: float, normalizer: float) -> None:
+        code = self._native().spaceslug_tiny_forward_finalize_lora_sgd(handle, learning_rate, normalizer)
+        if code != 0: raise BackendError(f"finalize Tiny SGD returned {code}")
+
+    def readback_tiny_adapters(self, handle: ctypes.c_void_p, rank: int = 4) -> list[list[float]]:
+        import array
+        sizes = [64 * rank, rank * 64] * 4
+        outputs = [array.array("f", [0.0] * size) for size in sizes]
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in outputs]
+        code = self._native().spaceslug_tiny_forward_readback_lora_adapters(handle, *pointers)
+        if code != 0: raise BackendError(f"Tiny adapter readback returned {code}")
+        return [values.tolist() for values in outputs]
+
+    def update_tiny_adapters(self, handle: ctypes.c_void_p, values: list[list[float]], rank: int = 4) -> None:
+        if len(values) != 8 or [len(v) for v in values] != [64 * rank, rank * 64] * 4:
+            raise ValueError("persistent Tiny adapters require four A/B pairs")
+        import array
+        arrays = [array.array("f", v) for v in values]
+        pointers = [(ctypes.c_float * len(v)).from_buffer(v) for v in arrays]
+        code = self._native().spaceslug_tiny_forward_update_lora_adapters(handle, *pointers)
+        if code != 0: raise BackendError(f"Tiny adapter restore returned {code}")
+
+    def close_tiny_persistent(self, handle: ctypes.c_void_p) -> None:
+        self._native().spaceslug_tiny_forward_destroy(handle)
+        if hasattr(self, "_tiny_arrays"): self._tiny_arrays.pop(int(handle.value), None)
 
     def tiny_forward_capability(self) -> str:
         native = self._native()

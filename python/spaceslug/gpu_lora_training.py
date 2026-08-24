@@ -76,6 +76,44 @@ class PersistentGpuLoRATrainer:
         except Exception: pass
 
 
+class PersistentTinyTrainer:
+    """Fixed native Tiny graph trainer: one accumulation window, then SGD."""
+    def __init__(self, backend: Any, model: Any, adapter: Any, learning_rate: float = 0.01) -> None:
+        if (model.hidden_size, model.vocab_size, adapter.hidden_size, adapter.rank) != (64, 259, 64, 4):
+            raise ValueError("PersistentTiny supports only H=64, V=259, rank=4")
+        self.backend, self.model, self.adapter = backend, model, adapter
+        self.learning_rate, self.step_index, self.handle = learning_rate, 0, backend.create_tiny_persistent_full(model, adapter)
+
+    def train_tokens(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
+        if not 0 < len(tokens) <= 128 or len(targets) != len(tokens):
+            raise ValueError("PersistentTiny requires 1..128 tokens and equal targets")
+        mask = mask or [1] * len(tokens)
+        if len(mask) != len(tokens): raise ValueError("mask length must match tokens")
+        self.backend.begin_tiny_accumulation(self.handle)
+        losses = []
+        for position, (token, target, included) in enumerate(zip(tokens, targets, mask)):
+            result = self.backend.accumulate_tiny_backward(self.handle, token, position, target, included)
+            losses.append(result["loss"][0])
+        self.backend.finalize_tiny_sgd(self.handle, self.learning_rate, float(sum(mask) or 1))
+        self.step_index += 1
+        return {"status": "ok", "step": self.step_index, "loss": losses, "gpu_execution": True, "device_resident": True, "optimizer": "sgd", "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+
+    def readback_adapter(self) -> list[list[float]]:
+        return self.backend.readback_tiny_adapters(self.handle)
+
+    def restore_adapter(self, values: list[list[float]]) -> None:
+        self.backend.update_tiny_adapters(self.handle, values)
+
+    def close(self) -> None:
+        if self.handle is not None:
+            self.backend.close_tiny_persistent(self.handle)
+            self.handle = None
+
+    def __del__(self) -> None:
+        try: self.close()
+        except Exception: pass
+
+
 class GpuLoRATrainer:
     """Host-coordinated repeated GPU steps; deliberately not device-resident."""
     def __init__(self, backend: Any, model: Any, adapter: Any, state: GpuLoRATrainingState | None = None) -> None:
