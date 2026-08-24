@@ -50,6 +50,10 @@ A tiny one-layer model must:
 
 Only after this passes should Vulkan backward work begin.
 
+## Optional fixed retained forward-loss binding
+
+The native `spaceslug_tiny_forward_loss_fixed_retained` ABI is optional and is exposed by the Python backend as `execute_tiny_fixed_retained_loss` and by `PersistentTinyTrainer.fixed_forward_loss`. It is a distinct capability from forward-only retained execution: tokens, targets, and mask each must contain exactly 128 values, and the operation returns 128 row losses plus the fixed `128 × 259` logits buffer. When the runtime does not export the symbol, the binding reports `not-run` rather than falling back or claiming production training support.
+
 ## Vulkan LoRA acceptance
 
 For the same tiny model and batch, CPU and Vulkan must agree on:

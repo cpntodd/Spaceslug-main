@@ -31,6 +31,13 @@ class _Backend:
     def readback_tiny_adapters(self, handle): return self.adapters
     def update_tiny_adapters(self, handle, values): self.adapters = values; self.calls.append("restore")
     def close_tiny_persistent(self, handle): self.calls.append("close")
+    def execute_tiny_fixed_retained_loss(self, handle, tokens, targets, mask):
+        self.calls.append(("fixed_forward_loss", len(tokens), len(targets), len(mask)))
+        class Result:
+            status, operation = "ok", "tiny_forward_loss_fixed_retained"
+            output, metrics = {"logits": [0.0] * (128 * 259), "row_losses": [0.0] * 128}, {"fixed_tokens": 128, "fixed_targets": 128, "fixed_mask": 128}
+        return Result()
+
     def execute_tiny_fixed_retained_forward(self, handle, tokens):
         self.calls.append(("fixed_forward", len(tokens)))
         class Result:
@@ -146,6 +153,21 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             resumed.close()
         split.close(); full.close()
 
+    def test_fixed_forward_loss_requires_exactly_128_each_and_reports_metadata(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend()
+        trainer = PersistentTinyTrainer(backend, Model(), Adapter())
+        with self.assertRaises(ValueError): trainer.fixed_forward_loss([1] * 127, [2] * 128, [1] * 128)
+        with self.assertRaises(ValueError): trainer.fixed_forward_loss([1] * 128, [2] * 129, [1] * 128)
+        with self.assertRaises(ValueError): trainer.fixed_forward_loss([1] * 128, [2] * 128, [1] * 127)
+        report = trainer.fixed_forward_loss([1] * 128, [2] * 128, [1] * 128)
+        self.assertTrue(report["fixed_forward_loss_retention"])
+        self.assertFalse(report["production_training"])
+        self.assertEqual(len(report["row_losses"]), 128)
+        self.assertIn(("fixed_forward_loss", 128, 128, 128), backend.calls)
+        trainer.close()
+
     def test_fixed_forward_requires_exactly_128_tokens_and_reports_metadata(self):
         class Model: hidden_size, vocab_size = 64, 259
         class Adapter: hidden_size, rank = 64, 4
@@ -184,6 +206,10 @@ class PersistentTinyTrainerTest(unittest.TestCase):
         capability = persistent_tiny_capability()
         self.assertTrue(capability["fixed_forward_retention"])
         self.assertEqual(capability["fixed_forward_tokens"], 128)
+        self.assertTrue(capability["fixed_forward_loss_retention"])
+        self.assertEqual(capability["fixed_forward_loss_tokens"], 128)
+        self.assertEqual(capability["fixed_forward_loss_targets"], 128)
+        self.assertEqual(capability["fixed_forward_loss_mask"], 128)
         self.assertFalse(capability["production_training"])
         self.assertEqual(capability["optimizers"], ["sgd", "adamw"])
         self.assertEqual(capability["production_status"], "bounded")

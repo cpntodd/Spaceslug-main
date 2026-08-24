@@ -128,6 +128,15 @@ class BackendSession:
                         fixed_retained = self._library.spaceslug_tiny_forward_fixed_retained
                         fixed_retained.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float)]
                         fixed_retained.restype = ctypes.c_int
+                    if hasattr(self._library, "spaceslug_tiny_forward_loss_fixed_retained"):
+                        fixed_retained_loss = self._library.spaceslug_tiny_forward_loss_fixed_retained
+                        fixed_retained_loss.argtypes = [ctypes.c_void_p,
+                                                         ctypes.POINTER(ctypes.c_uint32),
+                                                         ctypes.POINTER(ctypes.c_uint32),
+                                                         ctypes.POINTER(ctypes.c_uint32),
+                                                         ctypes.POINTER(ctypes.c_float),
+                                                         ctypes.POINTER(ctypes.c_float)]
+                        fixed_retained_loss.restype = ctypes.c_int
                     tiny_destroy = self._library.spaceslug_tiny_forward_destroy
                     tiny_destroy.argtypes = [ctypes.c_void_p]
                     if hasattr(self._library, "spaceslug_tiny_forward_create_full"):
@@ -218,6 +227,8 @@ class BackendSession:
                     operations.append("tiny_forward_abi")
                 if hasattr(native, "spaceslug_tiny_forward_fixed_retained"):
                     operations.append("tiny_forward_fixed_retained_abi")
+                if hasattr(native, "spaceslug_tiny_forward_loss_fixed_retained"):
+                    operations.append("tiny_forward_loss_fixed_retained_abi")
                 if hasattr(native, "spaceslug_lora_train_step"):
                     operations.append("lora_train_step_abi")
                 if hasattr(native, "spaceslug_attention_causal_backward"):
@@ -237,11 +248,13 @@ class BackendSession:
             except BackendError:
                 pass
         native_retained = False
+        native_retained_loss = False
         native_training = False
         if self._library_path.is_file():
             try:
                 native = self._native()
                 native_retained = hasattr(native, "spaceslug_tiny_forward_fixed_retained")
+                native_retained_loss = hasattr(native, "spaceslug_tiny_forward_loss_fixed_retained")
                 native_training = all(hasattr(native, name) for name in (
                     "spaceslug_tiny_forward_begin_lora_accumulation",
                     "spaceslug_tiny_forward_token_step_training_backward_accumulate",
@@ -265,8 +278,12 @@ class BackendSession:
             except (BackendError, AttributeError):
                 pass
         metadata = {"tiny_forward_fixed_retained": native_retained,
+                    "tiny_forward_loss_fixed_retained": native_retained_loss,
                     "tiny_training_production": native_training,
                     "tiny_forward_token_count": 128 if native_retained else None,
+                    "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
+                    "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
+                    "tiny_forward_loss_mask_count": 128 if native_retained_loss else None,
                     "dataset_batch_buffer": dataset_batch,
                     "dataset_batch_buffer_capability": dataset_batch_capability,
                     "dataset_batch_buffer_training": False}
@@ -808,6 +825,30 @@ class BackendSession:
             raise BackendError(f"fixed retained Tiny forward returned {code}")
         return ExecutionResult("ok", "tiny_forward_fixed_retained", "vulkan-radv", self.runtime_revision, self.capabilities().device, False,
                               {"parity": "persistent-forward", "gpu_execution": True, "device_resident": True, "fixed_tokens": 128}, {"logits": out.tolist()})
+
+    def execute_tiny_fixed_retained_loss(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], mask: list[int]) -> ExecutionResult:
+        """Run the optional retained forward+masked-loss ABI with exactly 128 rows."""
+        native = self._native()
+        operation = "tiny_forward_loss_fixed_retained"
+        if not hasattr(native, "spaceslug_tiny_forward_loss_fixed_retained"):
+            return ExecutionResult("not-run", operation, "vulkan-radv", self.runtime_revision, self.capabilities().device, False,
+                                   {"parity": "not-run", "reason": "fixed retained Tiny forward-loss ABI unavailable"}, {})
+        if len(tokens) != 128 or len(targets) != 128 or len(mask) != 128:
+            raise ValueError("fixed retained Tiny forward-loss requires exactly 128 tokens, targets, and mask values")
+        import array
+        tt, yy, mm = (array.array("I", values) for values in (tokens, targets, mask))
+        logits = array.array("f", [0.0] * (128 * 259))
+        row_losses = array.array("f", [0.0] * 128)
+        code = native.spaceslug_tiny_forward_loss_fixed_retained(
+            handle, (ctypes.c_uint32 * 128).from_buffer(tt), (ctypes.c_uint32 * 128).from_buffer(yy),
+            (ctypes.c_uint32 * 128).from_buffer(mm), (ctypes.c_float * len(logits)).from_buffer(logits),
+            (ctypes.c_float * 128).from_buffer(row_losses))
+        if code != 0:
+            raise BackendError(f"fixed retained Tiny forward-loss returned {code}")
+        return ExecutionResult("ok", operation, "vulkan-radv", self.runtime_revision, self.capabilities().device, False,
+                               {"parity": "persistent-forward-loss", "gpu_execution": True, "device_resident": True,
+                                "fixed_tokens": 128, "fixed_targets": 128, "fixed_mask": 128},
+                               {"logits": logits.tolist(), "row_losses": row_losses.tolist()})
 
     def open_lora_session(self, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int) -> ctypes.c_void_p:
         native = self._native()

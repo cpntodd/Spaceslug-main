@@ -55,6 +55,8 @@ def persistent_tiny_capability() -> dict[str, Any]:
     boundary = persistent_graph_boundary()
     return {"status": boundary["status"], "production_status": boundary["production_status"],
             "fixed_forward_retention": True, "fixed_forward_tokens": 128,
+            "fixed_forward_loss_retention": True, "fixed_forward_loss_tokens": 128,
+            "fixed_forward_loss_targets": 128, "fixed_forward_loss_mask": 128,
             "production_training": False,
             "immutable_command_buffer_reuse_prototype": boundary["immutable_command_buffer_reuse_prototype"],
             "optimizers": ["sgd", "adamw"], "window_streaming": True,
@@ -110,6 +112,20 @@ class PersistentTinyTrainer:
         self.beta1, self.beta2, self.epsilon = 0.9, 0.999, 1e-8
         self.sample_position = 0
         self.window_position = 0
+
+    def fixed_forward_loss(self, tokens: list[int], targets: list[int], mask: list[int]) -> dict[str, Any]:
+        """Run optional retained forward+masked loss with exactly 128 inputs each."""
+        if len(tokens) != 128 or len(targets) != 128 or len(mask) != 128:
+            raise ValueError("PersistentTiny fixed forward-loss requires exactly 128 tokens, targets, and mask values")
+        execute = getattr(self.backend, "execute_tiny_fixed_retained_loss", None)
+        if execute is None:
+            return {"status": "not-run", "operation": "tiny_forward_loss_fixed_retained",
+                    "fixed_forward_loss_retention": False, "production_training": False}
+        result = execute(self.handle, tokens, targets, mask)
+        return {"status": result.status, "operation": result.operation,
+                "fixed_forward_loss_retention": result.status == "ok", "production_training": False,
+                "logits": result.output.get("logits", []), "row_losses": result.output.get("row_losses", []),
+                "metrics": result.metrics}
 
     def fixed_forward(self, tokens: list[int]) -> dict[str, Any]:
         """Run retained forward only when the backend exposes its fixed ABI."""
