@@ -33,11 +33,11 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability() -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": True, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "persistent_command_buffer": False, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph is available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": True, "gradient_accumulation": True, "adamw": False, "dataset_training": False, "persistent_command_buffer": False, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["gradient-accumulation", "adamw", "other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["adamw", "other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:

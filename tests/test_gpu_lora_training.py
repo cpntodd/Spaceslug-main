@@ -27,6 +27,7 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertIn("adapter_A", boundary["persistent"])
         self.assertIn("logits", boundary["persistent"])
         self.assertIn("immutable-command-buffer-reuse", boundary["unsupported"])
+        self.assertNotIn("gradient-accumulation", boundary["unsupported"])
 
     def test_persistent_gpu_session_runs_tensor_step(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
@@ -52,6 +53,7 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertTrue(capability["device_resident"])
         self.assertFalse(capability["persistent_command_buffer"])
         self.assertTrue(capability["reusable_exec_submission"])
+        self.assertTrue(capability["gradient_accumulation"])
         self.assertFalse(capability["adamw"])
         self.assertFalse(capability["dataset_training"])
 
