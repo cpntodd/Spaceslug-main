@@ -103,6 +103,26 @@ class BackendSession:
                         create_full = self._library.spaceslug_tiny_forward_create_full
                         create_full.argtypes = [ctypes.POINTER(ctypes.c_float)] * 7
                         create_full.restype = ctypes.c_void_p
+                        if hasattr(self._library, "spaceslug_tiny_forward_begin_lora_adamw"):
+                            begin_adamw = self._library.spaceslug_tiny_forward_begin_lora_adamw
+                            begin_adamw.argtypes = [ctypes.c_void_p]
+                            begin_adamw.restype = ctypes.c_int
+                        if hasattr(self._library, "spaceslug_tiny_forward_accumulate_lora_adamw"):
+                            accumulate_adamw = self._library.spaceslug_tiny_forward_accumulate_lora_adamw
+                            accumulate_adamw.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32] + [ctypes.POINTER(ctypes.c_float)] * 9
+                            accumulate_adamw.restype = ctypes.c_int
+                        if hasattr(self._library, "spaceslug_tiny_forward_finalize_lora_adamw"):
+                            finalize_adamw = self._library.spaceslug_tiny_forward_finalize_lora_adamw
+                            finalize_adamw.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+                            finalize_adamw.restype = ctypes.c_int
+                        if hasattr(self._library, "spaceslug_tiny_forward_readback_lora_adamw_state"):
+                            readback_adamw = self._library.spaceslug_tiny_forward_readback_lora_adamw_state
+                            readback_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint64)]
+                            readback_adamw.restype = ctypes.c_int
+                        if hasattr(self._library, "spaceslug_tiny_forward_update_lora_adamw_state"):
+                            update_adamw = self._library.spaceslug_tiny_forward_update_lora_adamw_state
+                            update_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint64]
+                            update_adamw.restype = ctypes.c_int
                         begin_accumulation = self._library.spaceslug_tiny_forward_begin_lora_accumulation
                         begin_accumulation.argtypes = [ctypes.c_void_p]
                         begin_accumulation.restype = ctypes.c_int
@@ -173,6 +193,8 @@ class BackendSession:
                     operations.append("lora_sgd_multi_abi")
                 if hasattr(native, "spaceslug_lora_session_create"):
                     operations.append("lora_session_persistent_abi")
+                if all(hasattr(native, name) for name in ("spaceslug_tiny_forward_begin_lora_adamw", "spaceslug_tiny_forward_finalize_lora_adamw", "spaceslug_tiny_forward_readback_lora_adamw_state", "spaceslug_tiny_forward_update_lora_adamw_state")) and hasattr(native, "spaceslug_tiny_forward_token_step_training_backward_accumulate"):
+                    operations.append("tiny_lora_adamw_abi")
                 if hasattr(native, "spaceslug_causal_loss"):
                     operations.append("causal_loss_abi")
             except BackendError:
@@ -501,11 +523,12 @@ class BackendSession:
         code = self._native().spaceslug_tiny_forward_begin_lora_accumulation(handle)
         if code != 0: raise BackendError(f"begin Tiny accumulation returned {code}")
 
-    def accumulate_tiny_backward(self, handle: ctypes.c_void_p, token: int, position: int, target: int, mask: int) -> dict[str, Any]:
+    def accumulate_tiny_backward(self, handle: ctypes.c_void_p, token: int, position: int, target: int, mask: int, _fn: Any | None = None) -> dict[str, Any]:
         import array
         outputs = [array.array("f", [0.0] * n) for n in (1, 320, 64, 64, 64, 64, 64, 64, 64)]
         pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in outputs]
-        code = self._native().spaceslug_tiny_forward_token_step_training_backward_accumulate(handle, token, position, target, mask, *pointers)
+        fn = _fn or self._native().spaceslug_tiny_forward_token_step_training_backward_accumulate
+        code = fn(handle, token, position, target, mask, *pointers)
         if code != 0: raise BackendError(f"Tiny backward accumulation returned {code}")
         return {"loss": outputs[0].tolist(), "dlogits": outputs[1].tolist(), "dprojected": outputs[2].tolist(), "dquery": outputs[3].tolist(), "dkey": outputs[4].tolist(), "dvalue": outputs[5].tolist(), "dcontext": outputs[6].tolist(), "dstates": outputs[7].tolist()}
 
@@ -530,6 +553,49 @@ class BackendSession:
     def finalize_tiny_sgd(self, handle: ctypes.c_void_p, learning_rate: float, normalizer: float) -> None:
         code = self._native().spaceslug_tiny_forward_finalize_lora_sgd(handle, learning_rate, normalizer)
         if code != 0: raise BackendError(f"finalize Tiny SGD returned {code}")
+
+    def begin_tiny_adamw(self, handle: ctypes.c_void_p) -> None:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_begin_lora_adamw", None)
+        if fn is None: raise BackendError("native Tiny AdamW ABI unavailable")
+        code = fn(handle)
+        if code != 0: raise BackendError(f"begin Tiny AdamW returned {code}")
+
+    def accumulate_tiny_adamw(self, handle: ctypes.c_void_p, token: int, position: int, target: int, mask: int) -> dict[str, Any]:
+        native = self._native()
+        fn = getattr(native, "spaceslug_tiny_forward_accumulate_lora_adamw", None)
+        if fn is None:
+            fn = getattr(native, "spaceslug_tiny_forward_token_step_training_backward_accumulate", None)
+        if fn is None: raise BackendError("native Tiny AdamW accumulation ABI unavailable")
+        return self.accumulate_tiny_backward(handle, token, position, target, mask, _fn=fn)
+
+    def finalize_tiny_adamw(self, handle: ctypes.c_void_p, learning_rate: float, beta1: float, beta2: float, epsilon: float, weight_decay: float, normalizer: float) -> None:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_finalize_lora_adamw", None)
+        if fn is None: raise BackendError("native Tiny AdamW ABI unavailable")
+        code = fn(handle, learning_rate, beta1, beta2, epsilon, weight_decay, normalizer)
+        if code != 0: raise BackendError(f"finalize Tiny AdamW returned {code}")
+
+    def readback_tiny_adamw_state(self, handle: ctypes.c_void_p, rank: int = 4) -> dict[str, Any]:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_readback_lora_adamw_state", None)
+        if fn is None: raise BackendError("native Tiny AdamW ABI unavailable")
+        import array
+        size = 4 * 64 * rank + 4 * rank * 64
+        arrays = [array.array("f", [0.0] * size) for _ in range(3)]
+        step = ctypes.c_uint64()
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, ctypes.byref(step))
+        if code != 0: raise BackendError(f"Tiny AdamW state readback returned {code}")
+        return {"adapters": arrays[0].tolist(), "m": arrays[1].tolist(), "v": arrays[2].tolist(), "step": step.value}
+
+    def restore_tiny_adamw_state(self, handle: ctypes.c_void_p, state: dict[str, Any], rank: int = 4) -> None:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_update_lora_adamw_state", None)
+        if fn is None: raise BackendError("native Tiny AdamW ABI unavailable")
+        import array
+        size = 4 * 64 * rank + 4 * rank * 64
+        if any(len(state.get(key, [])) != size for key in ("adapters", "m", "v")): raise ValueError("invalid Tiny AdamW state")
+        arrays = [array.array("f", state[key]) for key in ("adapters", "m", "v")]
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, int(state.get("step", 0)))
+        if code != 0: raise BackendError(f"Tiny AdamW state restore returned {code}")
 
     def readback_tiny_adapters(self, handle: ctypes.c_void_p, rank: int = 4) -> list[list[float]]:
         import array

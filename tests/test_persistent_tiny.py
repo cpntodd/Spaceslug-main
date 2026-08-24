@@ -25,6 +25,13 @@ class _Backend:
     def readback_tiny_adapters(self, handle): return self.adapters
     def update_tiny_adapters(self, handle, values): self.adapters = values; self.calls.append("restore")
     def close_tiny_persistent(self, handle): self.calls.append("close")
+    def begin_tiny_adamw(self, handle): self.calls.append("adamw_begin")
+    def accumulate_tiny_adamw(self, handle, token, position, target, mask):
+        self.calls.append(("adamw_backward", token, position, target, mask)); return {"loss": [float(position)]}
+    def finalize_tiny_adamw(self, handle, learning_rate, beta1, beta2, epsilon, weight_decay, normalizer):
+        self.calls.append(("adamw_finalize", learning_rate, beta1, beta2, epsilon, weight_decay, normalizer))
+    def readback_tiny_adamw_state(self, handle): return {"adapters": [0.0] * 2048, "m": [0.0] * 2048, "v": [0.0] * 2048, "step": 1}
+    def restore_tiny_adamw_state(self, handle, state): self.calls.append("adamw_restore")
 
 
 class PersistentTinyTrainerTest(unittest.TestCase):
@@ -38,6 +45,17 @@ class PersistentTinyTrainerTest(unittest.TestCase):
         self.assertEqual(backend.calls[1], "begin")
         self.assertEqual(backend.calls[-1], ("finalize", 0.25, 1.0))
         self.assertEqual(report["loss"], [0.0, 1.0])
+        trainer.close()
+
+    def test_native_adamw_selection_and_state_roundtrip(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend(); trainer = PersistentTinyTrainer(backend, Model(), Adapter(), 0.25, optimizer="adamw", weight_decay=0.01)
+        report = trainer.train_tokens_adamw([1, 2], [3, 4], [1, 1])
+        self.assertEqual(report["optimizer"], "adamw")
+        self.assertIn(("adamw_finalize", 0.25, 0.9, 0.999, 1e-8, 0.01, 2.0), backend.calls)
+        trainer.restore_optimizer_state(trainer.readback_optimizer_state())
+        self.assertIn("adamw_restore", backend.calls)
         trainer.close()
 
     def test_fixed_windows_use_one_backend_batch_call(self):

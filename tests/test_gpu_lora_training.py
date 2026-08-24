@@ -55,6 +55,8 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertTrue(capability["reusable_exec_submission"])
         self.assertTrue(capability["gradient_accumulation"])
         self.assertFalse(capability["adamw"])
+        self.assertFalse(capability["native_adamw"])
+        self.assertEqual(capability["optimizers"], ["sgd"])
         self.assertFalse(capability["dataset_training"])
 
     def test_training_plan_lists_all_gpu_stages_and_boundaries(self):

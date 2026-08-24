@@ -32,8 +32,8 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
     return GpuLoRATrainingState.from_state_dict(data["training"]), data["adapter"]
 
 
-def gpu_lora_capability() -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": True, "gradient_accumulation": True, "adamw": False, "dataset_training": False, "persistent_command_buffer": False, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
+def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": False, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
@@ -77,12 +77,15 @@ class PersistentGpuLoRATrainer:
 
 
 class PersistentTinyTrainer:
-    """Fixed native Tiny graph trainer: one accumulation window, then SGD."""
-    def __init__(self, backend: Any, model: Any, adapter: Any, learning_rate: float = 0.01) -> None:
+    """Fixed native Tiny graph trainer with SGD and optional native AdamW."""
+    def __init__(self, backend: Any, model: Any, adapter: Any, learning_rate: float = 0.01, optimizer: str = "sgd", weight_decay: float = 0.0) -> None:
         if (model.hidden_size, model.vocab_size, adapter.hidden_size, adapter.rank) != (64, 259, 64, 4):
             raise ValueError("PersistentTiny supports only H=64, V=259, rank=4")
+        if optimizer not in {"sgd", "adamw"} or weight_decay < 0.0:
+            raise ValueError("optimizer must be sgd or adamw and weight_decay must not be negative")
         self.backend, self.model, self.adapter = backend, model, adapter
-        self.learning_rate, self.step_index, self.handle = learning_rate, 0, backend.create_tiny_persistent_full(model, adapter)
+        self.learning_rate, self.weight_decay, self.optimizer, self.step_index, self.handle = learning_rate, weight_decay, optimizer, 0, backend.create_tiny_persistent_full(model, adapter)
+        self.beta1, self.beta2, self.epsilon = 0.9, 0.999, 1e-8
 
     def train_windows(self, tokens: list[int], targets: list[int], window_length: int, mask: list[int] | None = None) -> dict[str, Any]:
         if not 0 < window_length <= 128 or not tokens or len(tokens) % window_length:
@@ -96,25 +99,43 @@ class PersistentTinyTrainer:
         self.step_index += 1
         return {"status": "ok", "step": self.step_index, "loss": losses, "windows": len(tokens) // window_length, "window_length": window_length, "gpu_execution": True, "device_resident": True, "optimizer": "sgd", "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
 
-    def train_tokens(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
+    def train_tokens_adamw(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
+        return self._train_tokens(tokens, targets, mask, "adamw")
+
+    def _train_tokens(self, tokens: list[int], targets: list[int], mask: list[int] | None, optimizer: str) -> dict[str, Any]:
         if not 0 < len(tokens) <= 128 or len(targets) != len(tokens):
             raise ValueError("PersistentTiny requires 1..128 tokens and equal targets")
         mask = mask or [1] * len(tokens)
         if len(mask) != len(tokens): raise ValueError("mask length must match tokens")
-        self.backend.begin_tiny_accumulation(self.handle)
+        begin = self.backend.begin_tiny_adamw if optimizer == "adamw" else self.backend.begin_tiny_accumulation
+        accumulate = self.backend.accumulate_tiny_adamw if optimizer == "adamw" else self.backend.accumulate_tiny_backward
+        finalize = self.backend.finalize_tiny_adamw if optimizer == "adamw" else self.backend.finalize_tiny_sgd
+        begin(self.handle)
         losses = []
         for position, (token, target, included) in enumerate(zip(tokens, targets, mask)):
-            result = self.backend.accumulate_tiny_backward(self.handle, token, position, target, included)
+            result = accumulate(self.handle, token, position, target, included)
             losses.append(result["loss"][0])
-        self.backend.finalize_tiny_sgd(self.handle, self.learning_rate, float(sum(mask) or 1))
+        if optimizer == "adamw":
+            finalize(self.handle, self.learning_rate, self.beta1, self.beta2, self.epsilon, self.weight_decay, float(sum(mask) or 1))
+        else:
+            finalize(self.handle, self.learning_rate, float(sum(mask) or 1))
         self.step_index += 1
-        return {"status": "ok", "step": self.step_index, "loss": losses, "gpu_execution": True, "device_resident": True, "optimizer": "sgd", "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+        return {"status": "ok", "step": self.step_index, "loss": losses, "gpu_execution": True, "device_resident": True, "optimizer": optimizer, "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+
+    def train_tokens(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
+        return self._train_tokens(tokens, targets, mask, self.optimizer)
 
     def readback_adapter(self) -> list[list[float]]:
         return self.backend.readback_tiny_adapters(self.handle)
 
     def restore_adapter(self, values: list[list[float]]) -> None:
         self.backend.update_tiny_adapters(self.handle, values)
+
+    def readback_optimizer_state(self) -> dict[str, Any]:
+        return self.backend.readback_tiny_adamw_state(self.handle)
+
+    def restore_optimizer_state(self, state: dict[str, Any]) -> None:
+        self.backend.restore_tiny_adamw_state(self.handle, state)
 
     def close(self) -> None:
         if self.handle is not None:
