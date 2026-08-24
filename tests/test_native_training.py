@@ -90,6 +90,10 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(output["parameter_group"], "output")
         self.assertEqual(qkv["parameter_group"], "qkv")
         self.assertTrue(output["adamw_unsupported"])
+        self.assertTrue(qkv["adamw_unsupported"])
+        self.assertFalse(output["integrated_graph_adamw"])
+        self.assertFalse(qkv["integrated_graph_adamw"])
+        self.assertEqual(output["adamw_return_code"], -4)
         self.assertEqual(qkv["adamw_return_code"], -4)
         self.assertFalse(output["standalone_api"])
 

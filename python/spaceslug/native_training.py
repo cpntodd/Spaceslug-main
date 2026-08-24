@@ -75,6 +75,7 @@ def integrated_tiny_lm_head_capability(*, group: str = "lm_head", available: boo
         "activation_source": "graph-owned-forward-activations",
         "optimizer": "sgd",
         "adamw": False,
+        "integrated_graph_adamw": False,
         "trainable_parameter_groups": [group],
         "dataset_integration": False,
         "adamw_unsupported": True,
