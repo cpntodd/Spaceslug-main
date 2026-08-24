@@ -23,9 +23,10 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
 
     def test_persistent_graph_boundary_is_explicit(self):
         boundary = persistent_graph_boundary()
-        self.assertEqual(boundary["status"], "not-implemented")
+        self.assertEqual(boundary["status"], "implemented-bounded")
         self.assertIn("adapter_A", boundary["persistent"])
-        self.assertIn("logits", boundary["transient"])
+        self.assertIn("logits", boundary["persistent"])
+        self.assertIn("immutable-command-buffer-reuse", boundary["unsupported"])
 
     def test_persistent_gpu_session_runs_tensor_step(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")
@@ -49,16 +50,16 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         capability = gpu_lora_capability()
         self.assertEqual(capability["base_weights"], "frozen")
         self.assertTrue(capability["device_resident"])
-        self.assertTrue(capability["persistent_command_buffer"])
+        self.assertFalse(capability["persistent_command_buffer"])
+        self.assertTrue(capability["reusable_exec_submission"])
         self.assertFalse(capability["adamw"])
         self.assertFalse(capability["dataset_training"])
-        self.assertTrue(capability["persistent_command_buffer"])
 
     def test_training_plan_lists_all_gpu_stages_and_boundaries(self):
         plan = gpu_lora_training_plan()
-        self.assertEqual(plan["status"], "persistent-tensor-session-plus-bounded-lm-graph")
+        self.assertEqual(plan["status"], "persistent-tiny-token-graph")
         self.assertIn("gpu_multi_adapter_sgd", plan["steps"])
-        self.assertIn("persistent-token-derived-LM-graph", plan["unsupported"])
+        self.assertIn("immutable-command-buffer-reuse", plan["unsupported"])
 
     def test_repeated_gpu_steps_update_adapter_and_checkpoint(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")

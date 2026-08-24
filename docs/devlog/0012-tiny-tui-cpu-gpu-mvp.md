@@ -24,7 +24,7 @@
 
 ## Current GPU status
 
-The custom runtime is host-exposed for validated fp32 `sgemm`, causal attention, and backward/update APIs, with a CPU-first gate. Tiny GPU LoRA training now covers the fixed MVP contract (single-head H=64, V=259, padded T=128, rank=4): embeddings/positions, LoRA-aware Q/K/V and output composition, padded causal loss and dLogits, LM-head/output/causal-attention backward, four-adapter gradients, and GPU SGD. Native parity tests pass on RADV and lavapipe, and the Python trainer supports repeated host-orchestrated steps plus checkpoint metadata. This is a bounded experimental GPU LoRA language-model training graph, not persistent device-resident or dataset-scale training: command/buffer reuse, gradient accumulation, AdamW, and dataset training remain unsupported. CPU remains authoritative outside the bounded path.
+The custom runtime is host-exposed for validated fp32 `sgemm`, causal attention, backward, and update APIs, with a CPU-first gate. Tiny GPU LoRA training covers the fixed MVP contract (single-head H=64, V=259, padded T=128, rank=4): persistent embeddings/positions and LoRA-aware Q/K/V/output composition, padded causal loss and dLogits, LM-head/output/causal-attention/QKV backward, four-adapter gradients, GPU SGD, persistent activation buffers, reusable ExecEngine submissions, and adapter checkpoint/restore. Native parity tests pass on RADV and lavapipe; the fixed scope is fp32 H=64/V=259/Vp=320, T<=128, rank=4, frozen base weights, and SGD. Gradient accumulation, AdamW, other model shapes, and dataset training remain unsupported. CPU remains authoritative outside this path.
 
 ## Verification
 

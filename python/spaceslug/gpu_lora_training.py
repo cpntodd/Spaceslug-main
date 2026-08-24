@@ -33,15 +33,15 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability() -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": True, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "persistent_command_buffer": True, "boundary": "persistent tensor LoRA session is available; full token-derived LM graph remains transient and host-orchestrated"}
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "device_resident": True, "gradient_accumulation": False, "adamw": False, "dataset_training": False, "persistent_command_buffer": False, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph is available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tensor-session-plus-bounded-lm-graph", "steps": ["gpu_lora_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "persistent_lora_session"], "buffers": "persistent-for-tensor-session", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["persistent-token-derived-LM-graph", "gradient-accumulation", "adamw", "dataset-training"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["gradient-accumulation", "adamw", "other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "not-implemented", "persistent": ["adapter_A", "adapter_B", "X", "dY", "dA", "dB", "Y"], "transient": ["embeddings", "positions", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "backward_intermediates"], "reason": "native persistent ABI is tensor-level; token-derived LM graph still runs through transient Python/native calls"}
+    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "rank": 4, "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["gradient_accumulation", "adamw", "other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
 
 
 class PersistentGpuLoRATrainer:
