@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from spaceslug.backend import BackendSession
-from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, PersistentGpuLoRATrainer, gpu_lora_capability, gpu_lora_training_plan, load_gpu_lora_checkpoint, save_gpu_lora_checkpoint
+from spaceslug.gpu_lora_training import GpuLoRATrainer, GpuLoRATrainingState, PersistentGpuLoRATrainer, gpu_lora_capability, gpu_lora_training_plan, load_gpu_lora_checkpoint, persistent_graph_boundary, save_gpu_lora_checkpoint
 from spaceslug.lora import TinyLoRAAdapter
 from spaceslug.projected_attention_reference import ProjectedTinyAttentionModel
 
@@ -20,6 +20,12 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
     def test_only_sgd_schema_is_supported(self):
         with self.assertRaises(ValueError):
             GpuLoRATrainingState.from_state_dict({"schema_version": 1, "optimizer": "adam"})
+
+    def test_persistent_graph_boundary_is_explicit(self):
+        boundary = persistent_graph_boundary()
+        self.assertEqual(boundary["status"], "not-implemented")
+        self.assertIn("adapter_A", boundary["persistent"])
+        self.assertIn("logits", boundary["transient"])
 
     def test_persistent_gpu_session_runs_tensor_step(self):
         backend = BackendSession("/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime", "runtime")

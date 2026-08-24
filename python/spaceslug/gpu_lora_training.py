@@ -40,6 +40,10 @@ def gpu_lora_training_plan() -> dict[str, Any]:
     return {"operation": "tiny_lora_gpu_training", "status": "persistent-tensor-session-plus-bounded-lm-graph", "steps": ["gpu_lora_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "persistent_lora_session"], "buffers": "persistent-for-tensor-session", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["persistent-token-derived-LM-graph", "gradient-accumulation", "adamw", "dataset-training"]}
 
 
+def persistent_graph_boundary() -> dict[str, Any]:
+    return {"status": "not-implemented", "persistent": ["adapter_A", "adapter_B", "X", "dY", "dA", "dB", "Y"], "transient": ["embeddings", "positions", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "backward_intermediates"], "reason": "native persistent ABI is tensor-level; token-derived LM graph still runs through transient Python/native calls"}
+
+
 class PersistentGpuLoRATrainer:
     """Persistent native LoRA tensor session; keeps A/B device-resident across steps."""
     def __init__(self, backend: Any, a: list[float], b: list[float], rank: int, learning_rate: float, rows: int, step: int = 0) -> None:
