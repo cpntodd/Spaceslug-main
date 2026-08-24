@@ -76,6 +76,22 @@ class BackendSession:
                     causal_loss = self._library.spaceslug_causal_loss
                     causal_loss.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
                     causal_loss.restype = ctypes.c_int
+                if hasattr(self._library, "vulkan_runtime_dataset_batch_capability"):
+                    capability = self._library.vulkan_runtime_dataset_batch_capability
+                    capability.argtypes = []
+                    capability.restype = ctypes.c_char_p
+                if hasattr(self._library, "vulkan_runtime_dataset_batch_create"):
+                    create_batch = self._library.vulkan_runtime_dataset_batch_create
+                    create_batch.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+                    create_batch.restype = ctypes.c_void_p
+                if hasattr(self._library, "vulkan_runtime_dataset_batch_destroy"):
+                    destroy_batch = self._library.vulkan_runtime_dataset_batch_destroy
+                    destroy_batch.argtypes = [ctypes.c_void_p]
+                    destroy_batch.restype = None
+                if hasattr(self._library, "vulkan_runtime_dataset_batch_process"):
+                    process_batch = self._library.vulkan_runtime_dataset_batch_process
+                    process_batch.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 4 + [ctypes.POINTER(ctypes.c_float)]
+                    process_batch.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_lora_delta"):
                     lora_delta = self._library.spaceslug_lora_delta
                     lora_delta.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32, ctypes.c_uint32]
@@ -206,6 +222,8 @@ class BackendSession:
                     operations.append("tiny_lora_adamw_abi")
                 if hasattr(native, "spaceslug_causal_loss"):
                     operations.append("causal_loss_abi")
+                if hasattr(native, "vulkan_runtime_dataset_batch_process"):
+                    operations.append("dataset_batch_buffer_abi")
             except BackendError:
                 pass
         native_retained = False
@@ -221,9 +239,27 @@ class BackendSession:
                 ))
             except BackendError:
                 pass
+        dataset_batch = False
+        dataset_batch_capability = None
+        if self._library_path.is_file():
+            try:
+                native = self._native()
+                dataset_batch = all(hasattr(native, name) for name in (
+                    "vulkan_runtime_dataset_batch_capability",
+                    "vulkan_runtime_dataset_batch_create",
+                    "vulkan_runtime_dataset_batch_destroy",
+                    "vulkan_runtime_dataset_batch_process",
+                ))
+                if dataset_batch:
+                    dataset_batch_capability = native.vulkan_runtime_dataset_batch_capability().decode("utf-8")
+            except (BackendError, AttributeError):
+                pass
         metadata = {"tiny_forward_fixed_retained": native_retained,
                     "tiny_training_production": native_training,
-                    "tiny_forward_token_count": 128 if native_retained else None}
+                    "tiny_forward_token_count": 128 if native_retained else None,
+                    "dataset_batch_buffer": dataset_batch,
+                    "dataset_batch_buffer_capability": dataset_batch_capability,
+                    "dataset_batch_buffer_training": False}
         return BackendCapabilities("spaceslug", self.runtime_revision, tuple(operations), self._device, self.software_vulkan, str(self._library_path) if self._library_path.is_file() else None, metadata)
 
     def execute_vector_add(self, left: list[float] | None = None, right: list[float] | None = None) -> ExecutionResult:
@@ -525,6 +561,50 @@ class BackendSession:
             else: os.environ["VK_ICD_FILENAMES"] = old_icd
         if code != 0: raise BackendError(f"native projection backward returned {code}")
         return list(result)
+
+    def dataset_batch_buffer_capability(self) -> str:
+        """Return the optional standalone dataset prototype capability string."""
+        native = self._native()
+        fn = getattr(native, "vulkan_runtime_dataset_batch_capability", None)
+        if fn is None:
+            return "unsupported"
+        return fn().decode("utf-8")
+
+    def create_dataset_batch_buffer(self, window_count: int, window_tokens: int) -> ctypes.c_void_p:
+        """Create the optional standalone fixed-window dataset buffer.
+
+        This prototype owns dataset staging/device buffers only; it is not a
+        PersistentTiny training graph and does not perform model training.
+        """
+        if window_count <= 0 or window_tokens <= 0:
+            raise ValueError("dataset batch dimensions must be positive")
+        fn = getattr(self._native(), "vulkan_runtime_dataset_batch_create", None)
+        if fn is None:
+            raise BackendError("native dataset batch buffer ABI unavailable")
+        handle = fn(None, window_count, window_tokens)
+        if not handle:
+            raise BackendError("dataset batch buffer creation failed")
+        return ctypes.c_void_p(handle)
+
+    def process_dataset_batch_buffer(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], controls: list[int], window_count: int, window_tokens: int) -> list[float]:
+        """Process one rectangular batch through the standalone prototype."""
+        elements = window_count * window_tokens
+        if window_count <= 0 or window_tokens <= 0 or any(len(values) != elements for values in (tokens, targets, masks)) or len(controls) != window_count:
+            raise ValueError("dataset batch inputs do not match fixed dimensions")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks, controls)]
+        output = array.array("f", [0.0] * (window_count * 2))
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = self._native().vulkan_runtime_dataset_batch_process(handle, *pointers, (ctypes.c_float * len(output)).from_buffer(output))
+        if code != 0:
+            raise BackendError(f"dataset batch buffer processing returned {code}")
+        return output.tolist()
+
+    def close_dataset_batch_buffer(self, handle: ctypes.c_void_p) -> None:
+        fn = getattr(self._native(), "vulkan_runtime_dataset_batch_destroy", None)
+        if fn is None:
+            raise BackendError("native dataset batch buffer ABI unavailable")
+        fn(handle)
 
     def create_tiny_persistent_full(self, model: Any, adapter: Any) -> ctypes.c_void_p:
         """Create the fixed Tiny graph; only H=64, V=259, rank=4 is supported."""
