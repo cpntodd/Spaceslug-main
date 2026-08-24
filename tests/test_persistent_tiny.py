@@ -40,6 +40,18 @@ class PersistentTinyTrainerTest(unittest.TestCase):
         self.assertEqual(report["loss"], [0.0, 1.0])
         trainer.close()
 
+    def test_fixed_windows_use_one_backend_batch_call(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        backend = _Backend()
+        backend.accumulate_tiny_windows = lambda handle, tokens, targets, mask, window_length: (backend.calls.append(("windows", tokens, targets, mask, window_length)) or [float(i) for i in range(len(tokens))])
+        trainer = PersistentTinyTrainer(backend, Model(), Adapter(), 0.25)
+        report = trainer.train_windows([1, 2, 3, 4], [5, 6, 7, 8], 2, [1, 1, 0, 1])
+        self.assertEqual(report["loss"], [0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(report["windows"], 2)
+        self.assertIn(("windows", [1, 2, 3, 4], [5, 6, 7, 8], [1, 1, 0, 1], 2), backend.calls)
+        trainer.close()
+
     def test_unsupported_shape_is_explicit(self):
         class Model: hidden_size, vocab_size = 32, 259
         class Adapter: hidden_size, rank = 32, 4

@@ -509,6 +509,24 @@ class BackendSession:
         if code != 0: raise BackendError(f"Tiny backward accumulation returned {code}")
         return {"loss": outputs[0].tolist(), "dlogits": outputs[1].tolist(), "dprojected": outputs[2].tolist(), "dquery": outputs[3].tolist(), "dkey": outputs[4].tolist(), "dvalue": outputs[5].tolist(), "dcontext": outputs[6].tolist(), "dstates": outputs[7].tolist()}
 
+    def accumulate_tiny_windows(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], mask: list[int], window_length: int) -> list[float]:
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(mask) or len(tokens) % window_length:
+            raise ValueError("batched Tiny windows require equal, non-empty, rectangular inputs")
+        import array
+        fn = getattr(self._native(), "spaceslug_tiny_forward_token_windows_training_backward_accumulate", None)
+        if fn is None:
+            raise BackendError("batched Tiny window ABI unavailable")
+        windows = len(tokens) // window_length
+        token_values, target_values, mask_values = (array.array("I", values) for values in (tokens, targets, mask))
+        losses = array.array("f", [0.0] * len(tokens))
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in (token_values, target_values, mask_values)]
+        loss_pointer = (ctypes.c_float * len(losses)).from_buffer(losses)
+        fn.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 3 + [ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+        fn.restype = ctypes.c_int
+        code = fn(handle, *pointers, windows, window_length, loss_pointer)
+        if code != 0: raise BackendError(f"Tiny batched backward accumulation returned {code}")
+        return losses.tolist()
+
     def finalize_tiny_sgd(self, handle: ctypes.c_void_p, learning_rate: float, normalizer: float) -> None:
         code = self._native().spaceslug_tiny_forward_finalize_lora_sgd(handle, learning_rate, normalizer)
         if code != 0: raise BackendError(f"finalize Tiny SGD returned {code}")

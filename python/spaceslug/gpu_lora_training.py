@@ -84,6 +84,18 @@ class PersistentTinyTrainer:
         self.backend, self.model, self.adapter = backend, model, adapter
         self.learning_rate, self.step_index, self.handle = learning_rate, 0, backend.create_tiny_persistent_full(model, adapter)
 
+    def train_windows(self, tokens: list[int], targets: list[int], window_length: int, mask: list[int] | None = None) -> dict[str, Any]:
+        if not 0 < window_length <= 128 or not tokens or len(tokens) % window_length:
+            raise ValueError("PersistentTiny requires non-empty fixed windows of length 1..128")
+        if len(targets) != len(tokens): raise ValueError("targets length must match tokens")
+        mask = mask or [1] * len(tokens)
+        if len(mask) != len(tokens): raise ValueError("mask length must match tokens")
+        self.backend.begin_tiny_accumulation(self.handle)
+        losses = self.backend.accumulate_tiny_windows(self.handle, tokens, targets, mask, window_length)
+        self.backend.finalize_tiny_sgd(self.handle, self.learning_rate, float(sum(mask) or 1))
+        self.step_index += 1
+        return {"status": "ok", "step": self.step_index, "loss": losses, "windows": len(tokens) // window_length, "window_length": window_length, "gpu_execution": True, "device_resident": True, "optimizer": "sgd", "contract": {"hidden": 64, "vocab": 259, "rank": 4}}
+
     def train_tokens(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
         if not 0 < len(tokens) <= 128 or len(targets) != len(tokens):
             raise ValueError("PersistentTiny requires 1..128 tokens and equal targets")
