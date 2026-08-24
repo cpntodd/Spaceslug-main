@@ -33,21 +33,23 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": True, "fixed_shape_retained_command_buffer_resubmit": True, "reusable_exec_submission": True, "fp16_storage": True, "fp16_arithmetic": False, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 or rank=8 profiles; Python orchestration remains bounded"}
+    return {"status": "experimental", "production_status": "bounded", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": True, "fixed_shape_retained_command_buffer_resubmit": True, "reusable_exec_submission": True, "immutable_command_buffer_reuse_prototype": True, "fp16_storage": True, "fp16_arithmetic": False, "boundary": "verified native immutable-command reuse prototype accepts mutable Tiny inputs; production full-graph integration remains bounded to the fixed H=64/V=259/Vp=320/T<=128/rank=4 or rank=8 profiles and bounded Python orchestration"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "gpu_adamw", "batched_window_streaming", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizers": ["sgd", "adamw"], "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "production_status": "bounded", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "gpu_adamw", "batched_window_streaming", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizers": ["sgd", "adamw"], "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB", "adamw_m", "adamw_v"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizers": ["sgd", "adamw"], "optimizer": "adamw", "base_weights": "frozen", "window_streaming": True, "dataset_device_resident": False}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"status": "implemented-bounded", "production_status": "bounded", "immutable_command_buffer_reuse_prototype": True, "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB", "adamw_m", "adamw_v"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizers": ["sgd", "adamw"], "optimizer": "adamw", "base_weights": "frozen", "window_streaming": True, "dataset_device_resident": False}, "unsupported": ["other-model-shapes", "dataset-training", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
 
 
 def persistent_tiny_capability() -> dict[str, Any]:
     """Describe the PersistentTiny Python/native boundary."""
     boundary = persistent_graph_boundary()
-    return {"status": boundary["status"], "optimizers": ["sgd", "adamw"], "window_streaming": True,
+    return {"status": boundary["status"], "production_status": boundary["production_status"],
+            "immutable_command_buffer_reuse_prototype": boundary["immutable_command_buffer_reuse_prototype"],
+            "optimizers": ["sgd", "adamw"], "window_streaming": True,
             "native_adamw_state_checkpoint": True, "dataset_device_resident": False,
             "host_staging": True, "contract": boundary["contract"]}
 

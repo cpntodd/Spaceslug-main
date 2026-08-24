@@ -143,6 +143,8 @@ class PersistentTinyTrainerTest(unittest.TestCase):
     def test_persistent_tiny_capability_metadata(self):
         capability = persistent_tiny_capability()
         self.assertEqual(capability["optimizers"], ["sgd", "adamw"])
+        self.assertEqual(capability["production_status"], "bounded")
+        self.assertTrue(capability["immutable_command_buffer_reuse_prototype"])
         self.assertTrue(capability["native_adamw_state_checkpoint"])
         self.assertFalse(capability["dataset_device_resident"])
 

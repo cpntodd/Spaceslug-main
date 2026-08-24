@@ -24,7 +24,7 @@
 
 ## Current GPU status
 
-The custom runtime is host-exposed for validated fp32 `sgemm`, causal attention, backward, and update APIs, with a CPU-first gate. Tiny GPU LoRA training covers the fixed MVP contract (single-head H=64, V=259, padded T=128, rank=4): persistent embeddings/positions and LoRA-aware Q/K/V/output composition, padded causal loss and dLogits, LM-head/output/causal-attention/QKV backward, four-adapter gradients, GPU SGD, persistent activation buffers, reusable ExecEngine submissions, and adapter checkpoint/restore. Native parity tests pass on RADV and lavapipe; the fixed scope is fp32 H=64/V=259/Vp=320, T<=128, rank=4, frozen base weights, and SGD. Gradient accumulation, AdamW, other model shapes, and dataset training remain unsupported. CPU remains authoritative outside this path.
+The custom runtime is host-exposed for validated fp32 `sgemm`, causal attention, backward, and update APIs, with a CPU-first gate. Tiny GPU LoRA training covers the fixed MVP contract (single-head H=64, V=259, padded T=128, rank=4): persistent embeddings/positions and LoRA-aware Q/K/V/output composition, padded causal loss and dLogits, LM-head/output/causal-attention/QKV backward, four-adapter gradients, GPU SGD, persistent activation buffers, reusable ExecEngine submissions, and adapter checkpoint/restore. The mutable-input immutable Tiny command-reuse path has a verified native prototype, with native parity evidence on RADV and lavapipe. Production full-graph integration remains bounded: fp32 H=64/V=259/Vp=320, T<=128, rank=4 or rank=8, frozen base weights, and bounded host/Python orchestration. CPU remains authoritative outside this path.
 
 ## Verification
 
