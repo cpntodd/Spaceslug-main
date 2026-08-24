@@ -8,8 +8,8 @@
 
 | Repository | Revision | Relevant committed artifacts |
 |---|---|---|
-| `spaceslug-main` | `e3b0dfa` | Python host/backend and orchestration under `python/spaceslug/`; native ABI/client under `native/`; GPU/CPU acceptance tests under `tests/` |
-| `vulkan-runtime` | `fdbb5c2` | Vulkan APIs under `src/api/`, embedded GLSL kernels under `shaders/`, and per-kernel tests under `tests/` |
+| `spaceslug-main` | `a689383` | Python host/backend and orchestration under `python/spaceslug/`; native ABI/client under `native/`; GPU/CPU acceptance tests under `tests/` |
+| `vulkan-runtime` | `df65bb7` | Vulkan APIs under `src/api/`, embedded GLSL kernels under `shaders/`, and per-kernel tests under `tests/` |
 
 The current runtime facts are: `dataset_batch_buffer` is a standalone device-resident fixed-window staging API; `ForwardResourceGraph::train_dataset_batch(...)` is explicitly unsupported and returns `-3`; the FP16 Tiny constructor is an evaluation/storage path that widens frozen binary16 inputs to the unchanged FP32 graph; ranks 4 and 8 are supported; only fixed retained forward is retained; and full training uses ordinary submissions. These are implementation contracts, not separate acceptance releases.
 
@@ -80,7 +80,7 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
   ctest --test-dir build/debug --output-on-failure
 ```
 
-**Result: 41/41 tests passed in 97.09s.** The logged run does not constitute an RX580 throughput measurement; lavapipe is software Vulkan.
+**Result: 43/43 tests passed.** The logged run does not constitute an RX580 throughput measurement; lavapipe is software Vulkan.
 
 ## Explicit remaining boundaries
 
