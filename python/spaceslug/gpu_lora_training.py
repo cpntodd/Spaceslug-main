@@ -37,7 +37,7 @@ def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "gpu_adamw", "batched_window_streaming", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizers": ["sgd", "adamw"], "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
