@@ -33,15 +33,15 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
 
 
 def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
-    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": False, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
+    return {"status": "experimental", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "persistent_command_buffer": True, "fixed_shape_retained_command_buffer_resubmit": True, "reusable_exec_submission": True, "boundary": "native persistent Tiny token graph and device-resident gradient accumulation are available for the fixed H=64/V=259/Vp=320/T<=128/rank=4 contract; Python orchestration remains bounded"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizer": "sgd", "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "rank": 4, "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse"]}
+    return {"status": "implemented-bounded", "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "rank": 4, "dtype": "fp32", "optimizer": "sgd", "base_weights": "frozen"}, "unsupported": ["other-model-shapes", "dataset-training", "immutable-command-buffer-reuse-for-mutable-inputs"]}
 
 
 class PersistentGpuLoRATrainer:
