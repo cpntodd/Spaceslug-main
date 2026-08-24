@@ -343,7 +343,7 @@ class BackendSession:
                     dataset_batch_capability = native.vulkan_runtime_dataset_batch_capability().decode("utf-8")
             except (BackendError, AttributeError):
                 pass
-        from .native_training import integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability
+        from .native_training import integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability
         native_fp32_base_training = native_fp32_lm_head_capability()
         graph_lm_head = False
         graph_lm_head_capability = None
@@ -352,6 +352,7 @@ class BackendSession:
         graph_output_training_methods = False
         graph_qkv_training_methods = False
         graph_lm_head_adamw = False
+        graph_output_adamw = False
         if self._library_path.is_file():
             try:
                 native = self._native()
@@ -364,10 +365,15 @@ class BackendSession:
                 graph_lm_head_training_methods = hasattr(native, "spaceslug_tiny_forward_train_lm_head_sgd")
                 graph_output_training_methods = hasattr(native, "spaceslug_tiny_forward_train_output_sgd")
                 graph_qkv_training_methods = hasattr(native, "spaceslug_tiny_forward_train_qkv_sgd")
+                graph_output_adamw = all(hasattr(native, name) for name in (
+                "spaceslug_tiny_forward_train_output_adamw",
+                "spaceslug_tiny_forward_readback_base_train_output_adamw_state",
+                "spaceslug_tiny_forward_update_base_train_output_adamw_state",
+                ))
                 graph_lm_head_adamw = all(hasattr(native, name) for name in (
-                    "spaceslug_tiny_forward_train_lm_head_adamw",
-                    "spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state",
-                    "spaceslug_tiny_forward_update_base_train_lm_head_adamw_state",
+                "spaceslug_tiny_forward_train_lm_head_adamw",
+                "spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state",
+                "spaceslug_tiny_forward_update_base_train_lm_head_adamw_state",
                 ))
                 if graph_lm_head:
                     graph_lm_head_capability = native.spaceslug_tiny_forward_base_train_capability().decode("utf-8")
@@ -391,6 +397,7 @@ class BackendSession:
                      "tiny_graph_integrated_output_sgd": integrated_tiny_lm_head_capability(group="output", available=graph_output_training_methods, runtime_capability=graph_lm_head_capability),
                      "tiny_graph_integrated_qkv_sgd": integrated_tiny_lm_head_capability(group="qkv", available=graph_qkv_training_methods, runtime_capability=graph_lm_head_capability),
                      "tiny_graph_integrated_lm_head_adamw": integrated_tiny_lm_head_adamw_capability(available=graph_lm_head_adamw, runtime_capability=graph_lm_head_capability),
+                      "tiny_graph_integrated_output_adamw": integrated_tiny_group_adamw_capability(group="output", available=graph_output_adamw, runtime_capability=graph_lm_head_capability),
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
@@ -847,6 +854,23 @@ class BackendSession:
         """Run one graph-owned Tiny combined-QKV SGD step."""
         self._train_tiny_graph_group_sgd("qkv", handle, tokens, targets, masks, learning_rate)
 
+    def _train_tiny_graph_group_adamw(self, group: str, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8, weight_decay: float = 0.0) -> None:
+        if group not in {"lm_head", "output"}:
+            raise ValueError("graph AdamW group must be lm_head or output")
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError(f"integrated Tiny {group} AdamW requires equal 1..128 token/target/mask values")
+        if learning_rate <= 0.0 or not 0.0 <= beta1 < 1.0 or not 0.0 <= beta2 < 1.0 or epsilon <= 0.0 or weight_decay < 0.0:
+            raise ValueError("invalid Tiny graph AdamW hyperparameters")
+        fn = getattr(self._native(), f"spaceslug_tiny_forward_train_{group}_adamw", None)
+        if fn is None:
+            raise BackendError(f"integrated graph {group} AdamW ABI unavailable (return code -4)")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, len(tokens), learning_rate, beta1, beta2, epsilon, weight_decay)
+        if code != 0:
+            raise BackendError(f"integrated graph {group} AdamW returned {code}")
+
     def train_tiny_graph_lm_head_adamw(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8, weight_decay: float = 0.0) -> None:
         """Run graph-owned Tiny LM-head AdamW when all runtime symbols exist."""
         if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
@@ -863,6 +887,10 @@ class BackendSession:
         if code != 0:
             raise BackendError(f"integrated graph LM-head AdamW returned {code}")
 
+    def train_tiny_graph_output_adamw(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8, weight_decay: float = 0.0) -> None:
+        """Run graph-owned Tiny output-projection AdamW when exported."""
+        self._train_tiny_graph_group_adamw("output", handle, tokens, targets, masks, learning_rate, beta1, beta2, epsilon, weight_decay)
+
     def readback_tiny_graph_lm_head_adamw_state(self, handle: ctypes.c_void_p, parameter_count: int = 64 * 320) -> dict[str, Any]:
         fn = getattr(self._native(), "spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state", None)
         if fn is None:
@@ -877,6 +905,35 @@ class BackendSession:
         if code != 0:
             raise BackendError(f"integrated graph LM-head AdamW state readback returned {code}")
         return {"weight": arrays[0].tolist(), "m": arrays[1].tolist(), "v": arrays[2].tolist(), "step": step.value}
+
+    def readback_tiny_graph_output_adamw_state(self, handle: ctypes.c_void_p, parameter_count: int = 64 * 64) -> dict[str, Any]:
+        return self._readback_tiny_graph_group_adamw_state("output", handle, parameter_count)
+
+    def _readback_tiny_graph_group_adamw_state(self, group: str, handle: ctypes.c_void_p, parameter_count: int) -> dict[str, Any]:
+        fn = getattr(self._native(), f"spaceslug_tiny_forward_readback_base_train_{group}_adamw_state", None)
+        if fn is None: raise BackendError(f"integrated graph {group} AdamW state ABI unavailable (return code -4)")
+        if parameter_count <= 0: raise ValueError("parameter_count must be positive")
+        import array
+        arrays = [array.array("f", [0.0] * parameter_count) for _ in range(3)]
+        step = ctypes.c_uint64()
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, ctypes.byref(step))
+        if code != 0: raise BackendError(f"integrated graph {group} AdamW state readback returned {code}")
+        return {"weight": arrays[0].tolist(), "m": arrays[1].tolist(), "v": arrays[2].tolist(), "step": step.value}
+
+    def update_tiny_graph_output_adamw_state(self, handle: ctypes.c_void_p, state: dict[str, Any], parameter_count: int = 64 * 64) -> None:
+        self._update_tiny_graph_group_adamw_state("output", handle, state, parameter_count)
+
+    def _update_tiny_graph_group_adamw_state(self, group: str, handle: ctypes.c_void_p, state: dict[str, Any], parameter_count: int) -> None:
+        fn = getattr(self._native(), f"spaceslug_tiny_forward_update_base_train_{group}_adamw_state", None)
+        if fn is None: raise BackendError(f"integrated graph {group} AdamW state ABI unavailable (return code -4)")
+        if parameter_count <= 0 or any(len(state.get(key, [])) != parameter_count for key in ("weight", "m", "v")):
+            raise ValueError(f"invalid graph {group} AdamW state")
+        import array
+        arrays = [array.array("f", state[key]) for key in ("weight", "m", "v")]
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, int(state.get("step", 0)))
+        if code != 0: raise BackendError(f"integrated graph {group} AdamW state update returned {code}")
 
     def update_tiny_graph_lm_head_adamw_state(self, handle: ctypes.c_void_p, state: dict[str, Any], parameter_count: int = 64 * 320) -> None:
         fn = getattr(self._native(), "spaceslug_tiny_forward_update_base_train_lm_head_adamw_state", None)

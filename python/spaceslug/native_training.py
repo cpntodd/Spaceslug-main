@@ -87,21 +87,30 @@ def integrated_tiny_lm_head_capability(*, group: str = "lm_head", available: boo
 
 def integrated_tiny_lm_head_adamw_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
     """Return the conditional graph-owned Tiny LM-head AdamW contract."""
+    return integrated_tiny_group_adamw_capability(group="lm_head", available=available, runtime_capability=runtime_capability)
+
+
+def integrated_tiny_group_adamw_capability(*, group: str, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
+    """Return a conditional graph-owned Tiny AdamW contract for one supported group."""
+    if group not in {"lm_head", "output"}:
+        raise ValueError("group must be lm_head or output")
     return {
-        "operation": "tiny_graph_owned_lm_head_adamw",
+        "operation": f"tiny_graph_owned_{group}_adamw",
+        "parameter_group": group,
         "status": "available" if available else "unsupported",
         "native_binding": available,
         "integrated_graph_adamw": available,
-        "graph_owned_lm_head": True,
+        "graph_owned_lm_head": group == "lm_head",
+        "graph_owned_parameter_group": True,
         "standalone_api": False,
         "optimizer": "adamw",
         "optimizer_state": "graph-owned-m-v-step",
-        "trainable_parameter_groups": ["lm_head"],
+        "trainable_parameter_groups": [group],
         "dataset_integration": False,
         "retained_training": False,
         "return_code_when_unavailable": -4,
         "return_code": 0 if available else -4,
-        "contract": "persistent Tiny forward graph owns activations, LM-head, AdamW moments, and step; host owns token windows and checkpoints",
+        "contract": f"persistent Tiny forward graph owns activations, {group}, AdamW moments, and step; host owns token windows and checkpoints",
         "runtime_capability": runtime_capability,
     }
 
@@ -127,4 +136,4 @@ def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> d
     }
 
 
-__all__ = ["integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
+__all__ = ["integrated_tiny_group_adamw_capability", "integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]

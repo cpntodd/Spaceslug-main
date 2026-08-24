@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from spaceslug.backend import BackendSession
-from spaceslug.native_training import integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
+from spaceslug.native_training import integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
 
 
 class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
@@ -72,6 +72,10 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         adamw = metadata["tiny_graph_integrated_lm_head_adamw"]
         self.assertEqual(adamw["return_code"], 0 if adamw["status"] == "available" else -4)
         self.assertEqual(adamw["optimizer_state"], "graph-owned-m-v-step")
+        output_adamw = metadata["tiny_graph_integrated_output_adamw"]
+        self.assertEqual(output_adamw["return_code"], 0 if output_adamw["status"] == "available" else -4)
+        self.assertEqual(output_adamw["parameter_group"], "output")
+        self.assertFalse(metadata["tiny_graph_integrated_qkv_sgd"]["integrated_graph_adamw"])
 
     def test_mocked_ctypes_trainer_binds_integrated_sgd(self):
         session = BackendSession("/tmp/runtime", "test")
@@ -109,6 +113,25 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ["output", "qkv"])
         with self.assertRaises(ValueError):
             session.train_tiny_graph_output_sgd(123, [1] * 129, [2] * 129, [1] * 129, 0.1)
+
+    def test_output_adamw_metadata_and_mocked_binding(self):
+        capability = integrated_tiny_group_adamw_capability(group="output", available=True)
+        self.assertEqual(capability["parameter_group"], "output")
+        self.assertTrue(capability["integrated_graph_adamw"])
+        self.assertFalse(capability["dataset_integration"])
+        self.assertFalse(capability["retained_training"])
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_train_output_adamw(self, *args): calls.append(("train", args)); return 0
+            def spaceslug_tiny_forward_readback_base_train_output_adamw_state(self, handle, w, m, v, step): calls.append(("read", handle)); step._obj.value = 3; return 0
+            def spaceslug_tiny_forward_update_base_train_output_adamw_state(self, *args): calls.append(("update", args[-1])); return 0
+        session._native = lambda: Native()
+        session.train_tiny_graph_output_adamw(123, [1], [2], [1], 0.01)
+        state = session.readback_tiny_graph_output_adamw_state(123)
+        session.update_tiny_graph_output_adamw_state(123, state)
+        self.assertEqual(state["step"], 3)
+        self.assertEqual(calls[-1], ("update", 3))
 
     def test_mocked_ctypes_trainer_binds_graph_adamw_and_state(self):
         session = BackendSession("/tmp/runtime", "test")
