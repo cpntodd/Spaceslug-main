@@ -32,8 +32,14 @@ def load_gpu_lora_checkpoint(path: str | Path) -> tuple[GpuLoRATrainingState, di
     return GpuLoRATrainingState.from_state_dict(data["training"]), data["adapter"]
 
 
+_SUPPORTED_TINY_PROFILES = (
+    "tiny_h64_v259_vp320_t128_rank4",
+    "tiny_h64_v259_vp320_t128_rank8",
+)
+
+
 def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
-    return {"status": "experimental", "production_status": "bounded", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "dataset_batch_buffer": "standalone-not-training", "dataset_batch_training_return_code": -3, "persistent_command_buffer": False, "fixed_forward_retained_only": True, "fixed_shape_retained_command_buffer_resubmit": True, "training_submission": "normal-submit", "reusable_exec_submission": True, "immutable_command_buffer_reuse_prototype": True, "fp16_storage": True, "fp16_storage_evaluation": True, "fp16_arithmetic": False, "boundary": "verified native immutable-command reuse prototype accepts mutable Tiny inputs; production full-graph integration remains bounded to the fixed H=64/V=259/Vp=320/T<=128/rank=4 or rank=8 profiles and bounded Python orchestration"}
+    return {"status": "experimental", "production_status": "bounded", "base_weights": "frozen", "optimizer": "sgd", "optimizers": ["sgd"] + (["adamw"] if native_adamw else []), "device_resident": True, "gradient_accumulation": True, "adamw": native_adamw, "native_adamw": native_adamw, "dataset_training": False, "dataset_batch_buffer": "standalone-not-training", "dataset_batch_training_return_code": -3, "persistent_command_buffer": False, "fixed_forward_retained_only": True, "fixed_shape_retained_command_buffer_resubmit": True, "training_submission": "normal-submit", "reusable_exec_submission": True, "immutable_command_buffer_reuse_prototype": True, "fp16_storage": True, "fp16_storage_evaluation": True, "fp16_arithmetic": False, "supported_tiny_profiles": list(_SUPPORTED_TINY_PROFILES), "arbitrary_dimensions": False, "boundary": "verified native immutable-command reuse prototype accepts mutable Tiny inputs; production full-graph integration remains bounded to the two named H=64/V=259/Vp=320/T=128/rank=4 or rank=8 profiles and bounded Python orchestration"}
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:

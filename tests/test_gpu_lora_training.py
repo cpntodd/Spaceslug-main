@@ -69,6 +69,11 @@ class GpuLoraTrainingStateTest(unittest.TestCase):
         self.assertFalse(capability["native_adamw"])
         self.assertEqual(capability["optimizers"], ["sgd"])
         self.assertFalse(capability["dataset_training"])
+        self.assertEqual(capability["supported_tiny_profiles"], [
+            "tiny_h64_v259_vp320_t128_rank4",
+            "tiny_h64_v259_vp320_t128_rank8",
+        ])
+        self.assertFalse(capability["arbitrary_dimensions"])
 
     def test_training_plan_lists_all_gpu_stages_and_boundaries(self):
         plan = gpu_lora_training_plan()
