@@ -30,6 +30,7 @@ This revision contains validated runtime targets including `vector_add`, `sgemm`
 | Other host backend operations | **Proposed** | No host API or parity acceptance claim yet. |
 | Integrated Tiny graph groups | **Conditional** | ctypes/trainer capability metadata reports graph-owned fixed-window SGD for **LM-head**, **output projection**, and **combined QKV** (`tiny_graph_integrated_lm_head_sgd`, `tiny_graph_integrated_output_sgd`, `tiny_graph_integrated_qkv_sgd`) when their symbols are exported. |
 | Integrated Tiny LM-head AdamW | **Conditional** | ctypes/trainer binds graph-owned LM-head AdamW plus optimizer-state readback/update when all symbols are exported (`tiny_graph_integrated_lm_head_adamw`); otherwise reports unsupported (`-4`). AdamW for integrated output projection and combined QKV is explicitly unsupported (`-4`). Token windows remain host-staged; this is not dataset or retained-command training. |
+| Device-resident dataset LM-head SGD | **Conditional** | Optional ABI consumes a `BatchBuffer` with at most 32 windows and window length <=128, and updates only the graph-owned LM head. Metadata is bounded batch metadata, explicitly not full-dataset training or all-parameter training. |
 | Standalone FP32 training subsets | **Separate bounded API** | Caller-supplied activation/gradient tensors; never report as graph-integrated training. |
 | Performance | **Not claimed** | Smoke timing is diagnostic only; no benchmark acceptance result is recorded. |
 

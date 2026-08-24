@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
+from .backend import BackendError
 
 @dataclass
 class GpuLoRATrainingState:
@@ -112,6 +113,34 @@ class PersistentTinyTrainer:
         self.beta1, self.beta2, self.epsilon = 0.9, 0.999, 1e-8
         self.sample_position = 0
         self.window_position = 0
+
+    def train_device_dataset_lm_head_sgd(self, tokens: list[int], targets: list[int], masks: list[int], controls: list[int], window_length: int) -> dict[str, Any]:
+        """Run bounded device-resident dataset LM-head SGD only.
+
+        The batch is metadata plus at most 32 windows of <=128 tokens. This is
+        not full-dataset training and does not update all model parameters.
+        """
+        if not 0 < window_length <= 128 or not controls or len(controls) > 32:
+            raise ValueError("device dataset training requires 1..32 windows of length 1..128")
+        if len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) != len(controls) * window_length:
+            raise ValueError("device dataset batch shape mismatch")
+        create = getattr(self.backend, "create_tiny_dataset_batch", None)
+        upload = getattr(self.backend, "upload_tiny_dataset_batch", None)
+        train = getattr(self.backend, "train_tiny_dataset_batch_lm_head_sgd", None)
+        close = getattr(self.backend, "close_tiny_dataset_batch", None)
+        if None in (create, upload, train, close):
+            raise BackendError("device-resident dataset LM-head SGD ABI unavailable")
+        batch = create(self.handle, len(controls), window_length)
+        try:
+            upload(batch, tokens, targets, masks, controls, len(controls), window_length)
+            train(self.handle, batch, self.learning_rate, float(sum(masks) or 1))
+        finally:
+            close(batch)
+        self.step_index += 1
+        return {"status": "ok", "step": self.step_index, "windows": len(controls), "window_length": window_length,
+                "optimizer": "sgd", "parameter_group": "lm_head", "device_resident": True,
+                "dataset_device_resident": True, "full_dataset_training": False, "all_parameter_training": False,
+                "metadata": "bounded dataset windows; not full dataset or all-parameter training"}
 
     def fixed_forward_loss(self, tokens: list[int], targets: list[int], mask: list[int]) -> dict[str, Any]:
         """Run optional retained forward+masked loss with exactly 128 inputs each."""

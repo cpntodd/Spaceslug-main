@@ -160,6 +160,22 @@ class BackendSession:
                     train_lm_head_adamw = self._library.spaceslug_tiny_forward_train_lm_head_adamw
                     train_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
                     train_lm_head_adamw.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_create_dataset_batch"):
+                    function = self._library.spaceslug_tiny_forward_create_dataset_batch
+                    function.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32]
+                    function.restype = ctypes.c_void_p
+                if hasattr(self._library, "spaceslug_tiny_forward_destroy_dataset_batch"):
+                    function = self._library.spaceslug_tiny_forward_destroy_dataset_batch
+                    function.argtypes = [ctypes.c_void_p]
+                    function.restype = None
+                if hasattr(self._library, "spaceslug_tiny_forward_upload_dataset_batch"):
+                    function = self._library.spaceslug_tiny_forward_upload_dataset_batch
+                    function.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_uint32)] * 4
+                    function.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_train_dataset_batch"):
+                    function = self._library.spaceslug_tiny_forward_train_dataset_batch
+                    function.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_float, ctypes.c_float]
+                    function.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state"):
                     readback_lm_head_adamw = self._library.spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state
                     readback_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint64)]
@@ -727,6 +743,52 @@ class BackendSession:
         if fn is None:
             raise BackendError("native dataset batch buffer ABI unavailable")
         fn(handle)
+
+    def create_tiny_dataset_batch(self, graph: ctypes.c_void_p, window_count: int, window_tokens: int) -> ctypes.c_void_p:
+        """Create optional device-resident dataset storage (max 32 x 128)."""
+        if not 0 < window_count <= 32 or not 0 < window_tokens <= 128:
+            raise ValueError("device dataset batches require 1..32 windows and 1..128 tokens")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_create_dataset_batch", None)
+        if fn is None:
+            raise BackendError("device-resident dataset training ABI unavailable")
+        handle = fn(graph, window_count, window_tokens)
+        if not handle:
+            raise BackendError("device dataset batch creation failed")
+        return ctypes.c_void_p(handle)
+
+    def upload_tiny_dataset_batch(self, batch: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], controls: list[int], window_count: int, window_tokens: int) -> None:
+        elements = window_count * window_tokens
+        if not 0 < window_count <= 32 or not 0 < window_tokens <= 128 or any(len(values) != elements for values in (tokens, targets, masks)) or len(controls) != window_count:
+            raise ValueError("device dataset batch inputs exceed 32 windows or 128 tokens")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_upload_dataset_batch", None)
+        if fn is None:
+            raise BackendError("device-resident dataset training ABI unavailable")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks, controls)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(batch, *pointers)
+        if code != 0:
+            raise BackendError(f"device dataset batch upload returned {code}")
+
+    def train_tiny_dataset_batch_lm_head_sgd(self, graph: ctypes.c_void_p, batch: ctypes.c_void_p, learning_rate: float, normalizer: float = 1.0) -> None:
+        """Train only the graph-owned LM head from uploaded device windows.
+
+        This is bounded dataset metadata/training, not full-dataset or all-parameter training.
+        """
+        if learning_rate <= 0.0 or normalizer <= 0.0:
+            raise ValueError("learning_rate and normalizer must be positive")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_dataset_batch", None)
+        if fn is None:
+            raise BackendError("device-resident dataset LM-head SGD ABI unavailable")
+        code = fn(graph, batch, learning_rate, normalizer)
+        if code != 0:
+            raise BackendError(f"device dataset LM-head SGD returned {code}")
+
+    def close_tiny_dataset_batch(self, batch: ctypes.c_void_p) -> None:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_destroy_dataset_batch", None)
+        if fn is None:
+            raise BackendError("device-resident dataset training ABI unavailable")
+        fn(batch)
 
     def create_tiny_persistent_full(self, model: Any, adapter: Any) -> ctypes.c_void_p:
         """Create the fixed Tiny graph; only H=64, V=259, rank=4 is supported."""

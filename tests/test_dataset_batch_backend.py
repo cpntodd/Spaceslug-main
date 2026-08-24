@@ -14,6 +14,8 @@ class DatasetBatchBackendTest(unittest.TestCase):
         )
         native.vulkan_runtime_dataset_batch_create.return_value = 1234
         native.vulkan_runtime_dataset_batch_process.return_value = 0
+        native.spaceslug_tiny_forward_upload_dataset_batch.return_value = 0
+        native.spaceslug_tiny_forward_train_dataset_batch.return_value = 0
         self.session._library = native
         self.session._library_path = self.session.runtime_root / "libvulkan_runtime_api.so"
         self.session._device = "test-device"
@@ -31,6 +33,18 @@ class DatasetBatchBackendTest(unittest.TestCase):
         self.session._library.vulkan_runtime_dataset_batch_process.assert_called_once()
         self.session.close_dataset_batch_buffer(handle)
         self.session._library.vulkan_runtime_dataset_batch_destroy.assert_called_once_with(handle)
+
+    def test_device_dataset_symbols_are_optional_and_bounded(self):
+        self.session._library.spaceslug_tiny_forward_create_dataset_batch.return_value = 4321
+        graph = ctypes.c_void_p(9)
+        batch = self.session.create_tiny_dataset_batch(graph, 2, 3)
+        self.session.upload_tiny_dataset_batch(batch, [1] * 6, [2] * 6, [1] * 6, [7, 8], 2, 3)
+        self.session.train_tiny_dataset_batch_lm_head_sgd(graph, batch, 0.1)
+        self.session.close_tiny_dataset_batch(batch)
+        with self.assertRaises(ValueError):
+            self.session.create_tiny_dataset_batch(graph, 33, 3)
+        with self.assertRaises(ValueError):
+            self.session.upload_tiny_dataset_batch(batch, [1] * 6, [2] * 6, [1] * 6, [7, 8], 2, 129)
 
     def test_invalid_shapes_are_rejected_before_native_call(self):
         with self.assertRaises(ValueError):
