@@ -38,6 +38,13 @@ class _Backend:
                 "output": [2.0], "output_m": [0.3], "output_v": [0.4]}
     def update_tiny_graph_base_checkpoint(self, handle, checkpoint):
         self.calls.append(("base_restore", checkpoint["group_mask"], checkpoint["qkv_adamw_unsupported"], checkpoint["qkv_adamw_gradient_source"]))
+    def execute_tiny_fixed_loss_metrics(self, handle, tokens, targets, mask):
+        self.calls.append(("fixed_scalar_metrics", len(tokens), len(targets), len(mask)))
+        class Result:
+            status, operation = "ok", "tiny_forward_loss_fixed_metrics"
+            output, metrics = {"loss": 1.5, "count": 7}, {"fixed_tokens": 128}
+        return Result()
+
     def execute_tiny_fixed_retained_loss(self, handle, tokens, targets, mask):
         self.calls.append(("fixed_forward_loss", len(tokens), len(targets), len(mask)))
         class Result:
@@ -178,6 +185,18 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             resumed.close()
         split.close(); full.close()
 
+    def test_fixed_scalar_metrics_requires_exactly_128_each_and_reports_metadata(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        trainer = PersistentTinyTrainer(_Backend(), Model(), Adapter())
+        with self.assertRaises(ValueError): trainer.fixed_scalar_metrics([1] * 127, [2] * 128, [1] * 128)
+        with self.assertRaises(ValueError): trainer.fixed_scalar_metrics([1] * 128, [2] * 128, [1] * 129)
+        report = trainer.fixed_scalar_metrics([1] * 128, [2] * 128, [1] * 128)
+        self.assertTrue(report["fixed_scalar_metrics_retention"])
+        self.assertEqual((report["loss"], report["count"]), (1.5, 7))
+        self.assertIn(("fixed_scalar_metrics", 128, 128, 128), trainer.backend.calls)
+        trainer.close()
+
     def test_fixed_forward_loss_requires_exactly_128_each_and_reports_metadata(self):
         class Model: hidden_size, vocab_size = 64, 259
         class Adapter: hidden_size, rank = 64, 4
@@ -235,6 +254,10 @@ class PersistentTinyTrainerTest(unittest.TestCase):
         self.assertEqual(capability["fixed_forward_loss_tokens"], 128)
         self.assertEqual(capability["fixed_forward_loss_targets"], 128)
         self.assertEqual(capability["fixed_forward_loss_mask"], 128)
+        self.assertTrue(capability["fixed_scalar_metrics_retention"])
+        self.assertEqual(capability["fixed_scalar_metrics_tokens"], 128)
+        self.assertEqual(capability["fixed_scalar_metrics_targets"], 128)
+        self.assertEqual(capability["fixed_scalar_metrics_mask"], 128)
         self.assertFalse(capability["production_training"])
         self.assertEqual(capability["optimizers"], ["sgd", "adamw"])
         self.assertEqual(capability["production_status"], "bounded")

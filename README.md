@@ -32,6 +32,8 @@ PYTHONPATH=python python3 -m unittest -v
 
 The TUI keyboard actions include dataset/model/training navigation, CPU verification/training, CPU inference, Vulkan GEMM, the validated attention gate, and GPU-chain status inspection. See [`docs/devlog/0012-tiny-tui-cpu-gpu-mvp.md`](docs/devlog/0012-tiny-tui-cpu-gpu-mvp.md).
 
+PersistentTiny also exposes bounded GPU scalar loss/count metrics through `fixed_scalar_metrics`; the token, target, and mask inputs remain exactly 128 each. See [`docs/PERSISTENT_TINY_METRICS.md`](docs/PERSISTENT_TINY_METRICS.md).
+
 The proposed Spaceslug Dataset Bundle (`.dts`) preserves lossless canonical records, supports derived tokenized training data, and records lineage and checksums. See [`docs/DATASETS.md`](docs/DATASETS.md), [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md), and [`docs/DEVLOG.md`](docs/DEVLOG.md).
 
 ## Design principles

@@ -58,6 +58,8 @@ def persistent_tiny_capability() -> dict[str, Any]:
             "fixed_forward_retention": True, "fixed_forward_tokens": 128,
             "fixed_forward_loss_retention": True, "fixed_forward_loss_tokens": 128,
             "fixed_forward_loss_targets": 128, "fixed_forward_loss_mask": 128,
+             "fixed_scalar_metrics_retention": True, "fixed_scalar_metrics_tokens": 128,
+             "fixed_scalar_metrics_targets": 128, "fixed_scalar_metrics_mask": 128,
             "production_training": False,
             "immutable_command_buffer_reuse_prototype": boundary["immutable_command_buffer_reuse_prototype"],
             "optimizers": ["sgd", "adamw"], "window_streaming": True,
@@ -141,6 +143,20 @@ class PersistentTinyTrainer:
                 "optimizer": "sgd", "parameter_group": "lm_head", "device_resident": True,
                 "dataset_device_resident": True, "full_dataset_training": False, "all_parameter_training": False,
                 "metadata": "bounded dataset windows; not full dataset or all-parameter training"}
+
+    def fixed_scalar_metrics(self, tokens: list[int], targets: list[int], mask: list[int]) -> dict[str, Any]:
+        """Read bounded GPU scalar loss/count metrics for exactly 128 rows."""
+        if len(tokens) != 128 or len(targets) != 128 or len(mask) != 128:
+            raise ValueError("PersistentTiny scalar metrics requires exactly 128 tokens, targets, and mask values")
+        execute = getattr(self.backend, "execute_tiny_fixed_loss_metrics", None)
+        if execute is None:
+            return {"status": "not-run", "operation": "tiny_forward_loss_fixed_metrics",
+                    "fixed_scalar_metrics_retention": False, "production_training": False}
+        result = execute(self.handle, tokens, targets, mask)
+        return {"status": result.status, "operation": result.operation,
+                "fixed_scalar_metrics_retention": result.status == "ok", "production_training": False,
+                "loss": result.output.get("loss"), "count": result.output.get("count"),
+                "metrics": result.metrics}
 
     def fixed_forward_loss(self, tokens: list[int], targets: list[int], mask: list[int]) -> dict[str, Any]:
         """Run optional retained forward+masked loss with exactly 128 inputs each."""

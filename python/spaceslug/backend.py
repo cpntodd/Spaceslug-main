@@ -340,6 +340,8 @@ class BackendSession:
                     operations.append("tiny_forward_fixed_retained_abi")
                 if hasattr(native, "spaceslug_tiny_forward_loss_fixed_retained"):
                     operations.append("tiny_forward_loss_fixed_retained_abi")
+                if hasattr(native, "spaceslug_tiny_forward_loss_fixed_metrics"):
+                    operations.append("tiny_forward_loss_fixed_metrics_abi")
                 if hasattr(native, "spaceslug_lora_train_step"):
                     operations.append("lora_train_step_abi")
                 if hasattr(native, "spaceslug_attention_causal_backward"):
@@ -360,12 +362,14 @@ class BackendSession:
                 pass
         native_retained = False
         native_retained_loss = False
+        native_scalar_metrics = False
         native_training = False
         if self._library_path.is_file():
             try:
                 native = self._native()
                 native_retained = hasattr(native, "spaceslug_tiny_forward_fixed_retained")
                 native_retained_loss = hasattr(native, "spaceslug_tiny_forward_loss_fixed_retained")
+                native_scalar_metrics = hasattr(native, "spaceslug_tiny_forward_loss_fixed_metrics")
                 native_training = all(hasattr(native, name) for name in (
                     "spaceslug_tiny_forward_begin_lora_accumulation",
                     "spaceslug_tiny_forward_token_step_training_backward_accumulate",
@@ -454,6 +458,10 @@ class BackendSession:
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_mask_count": 128 if native_retained_loss else None,
+                     "tiny_forward_loss_fixed_metrics": native_scalar_metrics,
+                     "tiny_forward_loss_fixed_metrics_tokens": 128 if native_scalar_metrics else None,
+                     "tiny_forward_loss_fixed_metrics_target_count": 128 if native_scalar_metrics else None,
+                     "tiny_forward_loss_fixed_metrics_mask_count": 128 if native_scalar_metrics else None,
                     "dataset_batch_buffer": dataset_batch,
                     "dataset_batch_buffer_capability": dataset_batch_capability,
                     "dataset_batch_buffer_training": False}
