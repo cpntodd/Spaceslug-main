@@ -19,11 +19,12 @@ class ProfilesPickerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "ok.md").write_text("hello", encoding="utf-8")
+            (root / "paper.pdf").write_bytes(b"%PDF-1.4 placeholder")
             (root / "skip.py").write_text("pass", encoding="utf-8")
             (root / ".git").mkdir()
             (root / ".git" / "ignored.md").write_text("ignored", encoding="utf-8")
             selected = pick_files(root)
-            self.assertEqual([path.name for path in selected.files], ["ok.md"])
+            self.assertEqual([path.name for path in selected.files], ["ok.md", "paper.pdf"])
             self.assertEqual([path.name for path in selected.skipped], ["ignored.md", "skip.py"])
 
 
