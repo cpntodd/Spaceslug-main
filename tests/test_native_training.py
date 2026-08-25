@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from spaceslug.backend import BackendSession
-from spaceslug.native_training import integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
+from spaceslug.native_training import integrated_tiny_embedding_sgd_capability, integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
 
 
 class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
@@ -34,6 +34,17 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(plan["implemented_subsets"], ["lm_head", "output_projection", "combined_qkv"])
         self.assertIn("native_full_base_backward", plan["unsupported_steps"])
         self.assertFalse(plan["full_base_training"])
+
+    def test_integrated_embedding_contract_is_distinct_and_bounded(self):
+        capability = integrated_tiny_embedding_sgd_capability(available=True, runtime_capability="mock-runtime")
+        self.assertTrue(capability["integrated_graph_sgd"])
+        self.assertTrue(capability["graph_owned_embedding"])
+        self.assertFalse(capability["standalone_api"])
+        self.assertEqual(capability["rows_max"], 128)
+        self.assertFalse(capability["positions_supported"])
+        self.assertFalse(capability["ffn_supported"])
+        self.assertFalse(capability["normalization_supported"])
+        self.assertFalse(capability["dataset_integration"])
 
     def test_integrated_contract_is_distinct_and_adamw_is_minus_four(self):
         capability = integrated_tiny_lm_head_capability(available=True, runtime_capability="mock-runtime")
@@ -104,6 +115,18 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(output_adamw["return_code"], 0 if output_adamw["status"] == "available" else -4)
         self.assertEqual(output_adamw["parameter_group"], "output")
         self.assertFalse(metadata["tiny_graph_integrated_qkv_sgd"]["integrated_graph_adamw"])
+
+    def test_mocked_ctypes_trainer_binds_graph_embedding_sgd_and_caps_rows(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_train_embeddings_sgd(self, *args): calls.append(args); return 0
+        session._native = lambda: Native()
+        session.train_tiny_graph_embeddings_sgd(123, [1, 2], [3, 4], [1, 1], 0.25)
+        self.assertEqual(calls[0][0], 123)
+        self.assertEqual(calls[0][4:], (2, 0.25))
+        with self.assertRaises(ValueError):
+            session.train_tiny_graph_embeddings_sgd(123, [1] * 129, [2] * 129, [1] * 129, 0.1)
 
     def test_mocked_ctypes_trainer_binds_integrated_sgd(self):
         session = BackendSession("/tmp/runtime", "test")
@@ -241,10 +264,11 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertIn("tiny_graph_base_train_lm_head", metadata)
         self.assertIn("tiny_graph_base_train_lm_head_capability", metadata)
         self.assertTrue(metadata["tiny_graph_dstate_readback_abi"])
-        self.assertEqual(metadata["tiny_graph_dstate_readback_capability"], "tiny_graph_embedding_dstate_readback_supported_fixed_window_no_embedding_update")
+        self.assertIn("tiny_graph_embedding_dstate_", metadata["tiny_graph_dstate_readback_capability"])
+        self.assertTrue(metadata["tiny_graph_embedding_training"])
+        self.assertTrue(metadata["tiny_graph_integrated_embedding_sgd"]["integrated_graph_sgd"])
         self.assertEqual(metadata["tiny_graph_dstate_readback_status"], 0)
         self.assertEqual((metadata["tiny_graph_dstate_hidden"], metadata["tiny_graph_dstate_token_capacity"], metadata["tiny_graph_dstate_float_count"]), (64, 128, 8192))
-        self.assertFalse(metadata["tiny_graph_embedding_training"])
         self.assertFalse(metadata["tiny_graph_base_train_lm_head_training"])
         self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_methods"], metadata["tiny_graph_base_train_lm_head"])
         self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_return_code"], -4 if metadata["tiny_graph_base_train_lm_head"] else None)

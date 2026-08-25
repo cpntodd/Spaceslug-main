@@ -116,6 +116,21 @@ class PersistentTinyTrainer:
         self.sample_position = 0
         self.window_position = 0
 
+    def train_graph_embeddings_sgd(self, tokens: list[int], targets: list[int], masks: list[int]) -> dict[str, Any]:
+        """Train graph-owned embeddings for one host-staged window (at most 128 rows)."""
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError("graph embedding SGD requires equal 1..128 token/target/mask values")
+        train = getattr(self.backend, "train_tiny_graph_embeddings_sgd", None)
+        if train is None:
+            raise BackendError("integrated graph embedding SGD ABI unavailable (return code -5)")
+        train(self.handle, tokens, targets, masks, self.learning_rate)
+        self.step_index += 1
+        return {"status": "ok", "step": self.step_index, "rows": len(tokens),
+                "optimizer": "sgd", "parameter_group": "embeddings", "graph_owned_embedding": True,
+                "standalone_api": False, "dataset_device_resident": False, "retained_training": False,
+                "unsupported": ["positions", "feed_forward", "normalization"],
+                "metadata": "integrated graph embedding SGD; host owns dataset and retained boundaries"}
+
     def train_device_dataset_lm_head_sgd(self, tokens: list[int], targets: list[int], masks: list[int], controls: list[int], window_length: int) -> dict[str, Any]:
         """Run bounded device-resident dataset LM-head SGD only.
 

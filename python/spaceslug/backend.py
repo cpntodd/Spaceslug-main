@@ -220,6 +220,10 @@ class BackendSession:
                         count = 9 if group == "qkv" else 3
                         update_state.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * count + [ctypes.c_uint64]
                         update_state.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_train_embeddings_sgd"):
+                    train_embeddings_sgd = self._library.spaceslug_tiny_forward_train_embeddings_sgd
+                    train_embeddings_sgd.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float]
+                    train_embeddings_sgd.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_graph_embedding_training_capability"):
                     graph_embedding_capability = self._library.spaceslug_tiny_forward_graph_embedding_training_capability
                     graph_embedding_capability.argtypes = []
@@ -409,7 +413,7 @@ class BackendSession:
                     dataset_batch_capability = native.vulkan_runtime_dataset_batch_capability().decode("utf-8")
             except (BackendError, AttributeError):
                 pass
-        from .native_training import integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability
+        from .native_training import integrated_tiny_embedding_sgd_capability, integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability
         native_fp32_base_training = native_fp32_lm_head_capability()
         graph_lm_head = False
         graph_lm_head_capability = None
@@ -421,6 +425,7 @@ class BackendSession:
         graph_output_adamw = False
         graph_qkv_adamw = False
         graph_dstate = False
+        graph_embedding_training = False
         graph_dstate_capability = None
         graph_dstate_status = None
         if self._library_path.is_file():
@@ -435,6 +440,7 @@ class BackendSession:
                 graph_lm_head_training_methods = hasattr(native, "spaceslug_tiny_forward_train_lm_head_sgd")
                 graph_output_training_methods = hasattr(native, "spaceslug_tiny_forward_train_output_sgd")
                 graph_qkv_training_methods = hasattr(native, "spaceslug_tiny_forward_train_qkv_sgd")
+                graph_embedding_training = hasattr(native, "spaceslug_tiny_forward_train_embeddings_sgd")
                 graph_output_adamw = all(hasattr(native, name) for name in (
                 "spaceslug_tiny_forward_train_output_adamw",
                 "spaceslug_tiny_forward_readback_base_train_output_adamw_state",
@@ -484,8 +490,9 @@ class BackendSession:
                      "tiny_graph_dstate_hidden": 64 if graph_dstate else None,
                      "tiny_graph_dstate_token_capacity": 128 if graph_dstate else None,
                      "tiny_graph_dstate_float_count": 128 * 64 if graph_dstate else None,
-                     "tiny_graph_embedding_training": False,
-                     "tiny_graph_embedding_training_return_code": -5,
+                      "tiny_graph_embedding_training": graph_embedding_training,
+                      "tiny_graph_embedding_training_return_code": 0 if graph_embedding_training else -5,
+                      "tiny_graph_integrated_embedding_sgd": integrated_tiny_embedding_sgd_capability(available=graph_embedding_training, runtime_capability=graph_dstate_capability),
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
@@ -1007,6 +1014,22 @@ class BackendSession:
                 "dstate": [values[offset:offset + 64] for offset in range(0, rows * 64, 64)],
                 "padded_dstate": values, "padding_zeroed": all(value == 0.0 for value in values[rows * 64:]),
                 "gpu_execution": True, "embedding_update": False}
+
+    def train_tiny_graph_embeddings_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
+        """Run optional graph-owned sparse embedding SGD; datasets stay host-owned."""
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError("integrated Tiny embedding SGD requires equal 1..128 token/target/mask values")
+        if learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_embeddings_sgd", None)
+        if fn is None:
+            raise BackendError("integrated graph embedding SGD ABI unavailable (return code -5)")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, len(tokens), learning_rate)
+        if code != 0:
+            raise BackendError(f"integrated graph embedding SGD returned {code}")
 
     def train_tiny_graph_lm_head_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
         """Run one graph-owned Tiny LM-head SGD step when the runtime exports it."""

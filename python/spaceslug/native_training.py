@@ -85,6 +85,33 @@ def integrated_tiny_lm_head_capability(*, group: str = "lm_head", available: boo
     }
 
 
+def integrated_tiny_embedding_sgd_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
+    """Return the optional graph-owned embedding SGD contract."""
+    return {
+        "operation": "tiny_graph_owned_embeddings_sgd",
+        "parameter_group": "embeddings",
+        "status": "available" if available else "unsupported",
+        "native_binding": available,
+        "integrated_graph_sgd": available,
+        "graph_owned_embedding": True,
+        "standalone_api": False,
+        "activation_source": "graph-owned-forward-backward-dstate",
+        "optimizer": "sgd",
+        "trainable_parameter_groups": ["embeddings"],
+        "dataset_integration": False,
+        "retained_training": False,
+        "positions_supported": False,
+        "ffn_supported": False,
+        "normalization_supported": False,
+        "rows_max": 128,
+        "return_code_when_unavailable": -5,
+        "return_code": 0 if available else -5,
+        "runtime_capability": runtime_capability,
+        "contract": "persistent Tiny graph owns embedding gradients and sparse SGD; host owns token windows and checkpoints",
+        "boundary": "graph-owned integrated embedding SGD is distinct from standalone caller-supplied embedding SGD; datasets and retained buffers remain host-owned",
+    }
+
+
 def integrated_tiny_lm_head_adamw_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
     """Return the conditional graph-owned Tiny LM-head AdamW contract."""
     return integrated_tiny_group_adamw_capability(group="lm_head", available=available, runtime_capability=runtime_capability)
@@ -138,4 +165,4 @@ def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> d
     }
 
 
-__all__ = ["integrated_tiny_group_adamw_capability", "integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
+__all__ = ["integrated_tiny_embedding_sgd_capability", "integrated_tiny_group_adamw_capability", "integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
