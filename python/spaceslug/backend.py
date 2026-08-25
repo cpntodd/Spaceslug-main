@@ -209,6 +209,17 @@ class BackendSession:
                     update_lm_head_adamw = self._library.spaceslug_tiny_forward_update_base_train_lm_head_adamw_state
                     update_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint64]
                     update_lm_head_adamw.restype = ctypes.c_int
+                for group in ("qkv", "output"):
+                    readback_state = getattr(self._library, f"spaceslug_tiny_forward_readback_base_train_{group}_adamw_state", None)
+                    update_state = getattr(self._library, f"spaceslug_tiny_forward_update_base_train_{group}_adamw_state", None)
+                    if readback_state is not None:
+                        count = 9 if group == "qkv" else 3
+                        readback_state.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * count + [ctypes.POINTER(ctypes.c_uint64)]
+                        readback_state.restype = ctypes.c_int
+                    if update_state is not None:
+                        count = 9 if group == "qkv" else 3
+                        update_state.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * count + [ctypes.c_uint64]
+                        update_state.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_capability"):
                     tiny_capability = self._library.spaceslug_tiny_forward_capability
                     tiny_capability.restype = ctypes.c_char_p
@@ -882,6 +893,11 @@ class BackendSession:
                     for projection in range(3):
                         pointer = native.spaceslug_tiny_base_checkpoint_qkv_weights(checkpoint, projection)
                         result[group].append([pointer[i] for i in range(64 * 64)])
+                    # The unified checkpoint ABI carries QKV moments through the
+                    # graph state ABI; keep them explicit and JSON-ready here.
+                    qkv_state = self.readback_tiny_graph_qkv_adamw_state(handle)
+                    result["qkv_m"] = qkv_state["m"]
+                    result["qkv_v"] = qkv_state["v"]
                 else:
                     count = int(native.spaceslug_tiny_base_checkpoint_float_count(checkpoint, bit)) or counts[group][1]
                     pointer = native.spaceslug_tiny_base_checkpoint_weights(checkpoint, bit)
@@ -916,7 +932,9 @@ class BackendSession:
             if fn is None or len(values) != 3: raise BackendError("QKV checkpoint restore ABI unavailable")
             code = fn(handle, *values)
             if code != 0: raise BackendError(f"QKV checkpoint restore returned {code}")
-        # AdamW is intentionally limited to LM-head/output; QKV remains SGD-only.
+        if mask & 4 and "qkv_m" in checkpoint and "qkv_v" in checkpoint:
+            state = {"weight": checkpoint.get("qkv", []), "m": checkpoint["qkv_m"], "v": checkpoint["qkv_v"], "step": int(checkpoint.get("adamw_step", 0))}
+            self.update_tiny_graph_qkv_adamw_state(handle, state)
         for group, count in (("lm_head", 64 * 320), ("output", 64 * 64)):
             if mask & (1 if group == "lm_head" else 2) and all(f"{group}_{key}" in checkpoint for key in ("m", "v")):
                 fn = getattr(native, f"spaceslug_tiny_forward_update_base_train_{group}_adamw_state", None)
@@ -1029,6 +1047,29 @@ class BackendSession:
 
     def readback_tiny_graph_output_adamw_state(self, handle: ctypes.c_void_p, parameter_count: int = 64 * 64) -> dict[str, Any]:
         return self._readback_tiny_graph_group_adamw_state("output", handle, parameter_count)
+
+    def readback_tiny_graph_qkv_adamw_state(self, handle: ctypes.c_void_p, parameter_count: int = 64 * 64) -> dict[str, Any]:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_readback_base_train_qkv_adamw_state", None)
+        if fn is None: raise BackendError("integrated graph QKV AdamW state ABI unavailable (return code -4)")
+        if parameter_count <= 0: raise ValueError("parameter_count must be positive")
+        import array
+        arrays = [array.array("f", [0.0] * parameter_count) for _ in range(9)]
+        step = ctypes.c_uint64()
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, ctypes.byref(step))
+        if code != 0: raise BackendError(f"integrated graph QKV AdamW state readback returned {code}")
+        return {"weight": [arrays[i].tolist() for i in range(3)], "m": [arrays[i].tolist() for i in range(3, 6)], "v": [arrays[i].tolist() for i in range(6, 9)], "step": step.value}
+
+    def update_tiny_graph_qkv_adamw_state(self, handle: ctypes.c_void_p, state: dict[str, Any], parameter_count: int = 64 * 64) -> None:
+        fn = getattr(self._native(), "spaceslug_tiny_forward_update_base_train_qkv_adamw_state", None)
+        if fn is None: raise BackendError("integrated graph QKV AdamW state ABI unavailable (return code -4)")
+        if parameter_count <= 0 or any(len(state.get(key, [])) != 3 or any(len(values) != parameter_count for values in state[key]) for key in ("weight", "m", "v")):
+            raise ValueError("invalid graph QKV AdamW state")
+        import array
+        arrays = [array.array("f", values) for key in ("weight", "m", "v") for values in state[key]]
+        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, int(state.get("step", 0)))
+        if code != 0: raise BackendError(f"integrated graph QKV AdamW state update returned {code}")
 
     def _readback_tiny_graph_group_adamw_state(self, group: str, handle: ctypes.c_void_p, parameter_count: int) -> dict[str, Any]:
         fn = getattr(self._native(), f"spaceslug_tiny_forward_readback_base_train_{group}_adamw_state", None)

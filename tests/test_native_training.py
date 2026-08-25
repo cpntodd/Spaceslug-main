@@ -151,6 +151,21 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         session.train_tiny_graph_qkv_adamw(123, 0.01, weight_decay=0.02)
         self.assertEqual(calls, [(123, 0.01, 0.9, 0.999, 1e-8, 0.02)])
 
+    def test_qkv_adamw_state_readback_and_restore(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_readback_base_train_qkv_adamw_state(self, handle, *args):
+                calls.append(("read", handle, len(args))); args[-1]._obj.value = 11; return 0
+            def spaceslug_tiny_forward_update_base_train_qkv_adamw_state(self, handle, *args):
+                calls.append(("update", handle, len(args), args[-1])); return 0
+        session._native = lambda: Native()
+        state = session.readback_tiny_graph_qkv_adamw_state(123, 2)
+        self.assertEqual((state["step"], len(state["weight"]), len(state["m"]), len(state["v"])), (11, 3, 3, 3))
+        session.update_tiny_graph_qkv_adamw_state(123, state, 2)
+        self.assertEqual(calls[0], ("read", 123, 10))
+        self.assertEqual(calls[1][0:3], ("update", 123, 10))
+
     def test_output_adamw_metadata_and_mocked_binding(self):
         capability = integrated_tiny_group_adamw_capability(group="output", available=True)
         self.assertEqual(capability["parameter_group"], "output")
