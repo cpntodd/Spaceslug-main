@@ -50,6 +50,10 @@ A tiny one-layer model must:
 
 Only after this passes should Vulkan backward work begin.
 
+## Optional graph dstate readback binding
+
+The optional `spaceslug_tiny_forward_readback_graph_dstate` ABI is exposed by `BackendSession.readback_tiny_graph_dstate`. It accepts equal token/target/mask windows with `1 <= rows <= 128`, returns graph-produced FP32 `dstate` rows with hidden size 64 plus zero-padded capacity rows through 128, and explicitly does not update embeddings. Capability/status metadata is reported as `tiny_graph_dstate_readback_*`; absent symbols remain unsupported without fallback.
+
 ## Optional fixed retained forward-loss binding
 
 The native `spaceslug_tiny_forward_loss_fixed_retained` ABI is optional and is exposed by the Python backend as `execute_tiny_fixed_retained_loss` and by `PersistentTinyTrainer.fixed_forward_loss`. It is a distinct capability from forward-only retained execution: tokens, targets, and mask each must contain exactly 128 values, and the operation returns 128 row losses plus the fixed `128 × 259` logits buffer. When the runtime does not export the symbol, the binding reports `not-run` rather than falling back or claiming production training support.

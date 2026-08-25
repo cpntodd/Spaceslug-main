@@ -215,11 +215,36 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             session.execute_tiny_fixed_loss_metrics(123, [1], [2], [1])
 
+    def test_mocked_graph_dstate_readback_binds_exact_rows_and_metadata(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_readback_graph_dstate(self, handle, tokens, targets, masks, rows, output):
+                calls.append((handle, rows, len(tokens), len(targets), len(masks), len(output)))
+                for index in range(rows * 64): output[index] = float(index)
+                return 0
+        session._native = lambda: Native()
+        report = session.readback_tiny_graph_dstate(123, [1, 2, 3], [4, 5, 6], [1, 1, 0])
+        self.assertEqual((report["rows"], report["hidden"], report["capacity"]), (3, 64, 128))
+        self.assertEqual(len(report["dstate"]), 3)
+        self.assertFalse(report["embedding_update"])
+        self.assertEqual(calls, [(123, 3, 3, 3, 3, 8192)])
+        for bad in (0, 129):
+            with self.assertRaises(ValueError):
+                session.readback_tiny_graph_dstate(123, [1], [2], [1], bad)
+        with self.assertRaises(ValueError):
+            session.readback_tiny_graph_dstate(123, [1], [], [1])
+
     def test_runtime_graph_owned_lm_head_boundary_is_metadata_only(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
         metadata = BackendSession(runtime, "test").capabilities().metadata
         self.assertIn("tiny_graph_base_train_lm_head", metadata)
         self.assertIn("tiny_graph_base_train_lm_head_capability", metadata)
+        self.assertTrue(metadata["tiny_graph_dstate_readback_abi"])
+        self.assertEqual(metadata["tiny_graph_dstate_readback_capability"], "tiny_graph_embedding_dstate_readback_supported_fixed_window_no_embedding_update")
+        self.assertEqual(metadata["tiny_graph_dstate_readback_status"], 0)
+        self.assertEqual((metadata["tiny_graph_dstate_hidden"], metadata["tiny_graph_dstate_token_capacity"], metadata["tiny_graph_dstate_float_count"]), (64, 128, 8192))
+        self.assertFalse(metadata["tiny_graph_embedding_training"])
         self.assertFalse(metadata["tiny_graph_base_train_lm_head_training"])
         self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_methods"], metadata["tiny_graph_base_train_lm_head"])
         self.assertEqual(metadata["tiny_graph_base_train_lm_head_training_return_code"], -4 if metadata["tiny_graph_base_train_lm_head"] else None)
