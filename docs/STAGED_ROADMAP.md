@@ -16,12 +16,12 @@ This document is the durable record of the approved staged implementation sequen
 
 The current Tiny contract is fixed and is not expanded, renamed, or generalized by this roadmap:
 
-- Exactly two GPU training profiles are supported: `tiny_h64_v259_vp320_t128_rank4` and `tiny_h64_v259_vp320_t128_rank8`. Both use **fp32**, **H=64**, vocabulary **V=259**, padded vocabulary **Vp=320**, sequence capacity **T=128**, and frozen base weights; only the LoRA rank differs (4 or 8). Unlisted shapes, dimensions, and ranks are rejected, never silently coerced.
-- Integrated graph SGD is available for the LM-head, output projection, combined QKV, and token embeddings, each for exactly `1 <= rows <= 128`.
-- Integrated graph AdamW is available for the LM-head and output projection only. Combined QKV AdamW is explicitly unavailable: no capability key, returns `-4`; two implementation attempts were rejected because verification was incomplete.
-- Positions, FFN, and normalization are unsupported; dataset-integrated all-parameter training and retained training are unsupported. The retained-command path is fixed forward+loss only.
+- Exactly two GPU training profiles are supported: `tiny_h64_v259_vp320_t128_rank4` and `tiny_h64_v259_vp320_t128_rank8`. Both use **fp32**, **H=64**, vocabulary **V=259**, padded vocabulary **Vp=320**, and sequence capacity **T=128**; only the LoRA rank differs (4 or 8). Unlisted shapes, dimensions, and ranks are rejected, never silently coerced.
+- Graph-owned SGD is available for token embeddings, the LM-head, output projection, and combined Q/K/V for exactly `1 <= rows <= 128`. The deterministic sparse embedding path handles repeated token IDs without floating-point atomics.
+- Graph-owned AdamW is available for the LM-head, output projection, and combined Q/K/V with persistent state and unified checkpoint/resume coverage. This does not make arbitrary-shape or all-dataset GPU training available.
+- Positions, FFN, and normalization are unsupported in the fixed Tiny architecture. Dataset-resident training remains bounded by its documented group/path contract, and the retained-command path is fixed forward/loss only; it does not retain backward or optimizer updates.
 - FP16 is a storage format only; arithmetic, accumulation, optimizer state, and training remain FP32.
-- CPU remains authoritative outside this bounded path; standalone caller-supplied subset APIs are separate and never a fallback into the graph-owned path.
+- GPU execution is primary only for the explicitly supported native operation selected by a job. CPU is the transparent fallback outside that bounded path; standalone caller-supplied APIs remain separate from graph-owned training.
 
 See [`TINY_GPU_TRAINING_STATUS.md`](TINY_GPU_TRAINING_STATUS.md) and the Tiny status section of [`ROADMAP.md`](ROADMAP.md) for the full evidence-backed statement.
 
