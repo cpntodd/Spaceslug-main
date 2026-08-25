@@ -92,14 +92,15 @@ def integrated_tiny_lm_head_adamw_capability(*, available: bool = False, runtime
 
 def integrated_tiny_group_adamw_capability(*, group: str, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
     """Return a conditional graph-owned Tiny AdamW contract for one supported group."""
-    if group not in {"lm_head", "output"}:
-        raise ValueError("group must be lm_head or output")
+    if group not in {"lm_head", "output", "qkv"}:
+        raise ValueError("group must be lm_head, output, or qkv")
     return {
         "operation": f"tiny_graph_owned_{group}_adamw",
         "parameter_group": group,
         "status": "available" if available else "unsupported",
         "native_binding": available,
         "integrated_graph_adamw": available,
+        "from_existing_gradients": group == "qkv",
         "graph_owned_lm_head": group == "lm_head",
         "graph_owned_parameter_group": True,
         "standalone_api": False,
@@ -110,7 +111,8 @@ def integrated_tiny_group_adamw_capability(*, group: str, available: bool = Fals
         "retained_training": False,
         "return_code_when_unavailable": -4,
         "return_code": 0 if available else -4,
-        "contract": f"persistent Tiny forward graph owns activations, {group}, AdamW moments, and step; host owns token windows and checkpoints",
+        "gradient_source": "existing-qkv-gradients" if group == "qkv" else "graph-owned-forward-activations",
+        "contract": f"persistent Tiny forward graph owns activations, {group}, AdamW moments, and step; host owns token windows and checkpoints" if group != "qkv" else "persistent Tiny forward graph applies AdamW to existing QKV gradients; no recompute or double update; host owns token windows and checkpoints",
         "runtime_capability": runtime_capability,
     }
 

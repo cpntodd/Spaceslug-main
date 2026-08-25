@@ -160,6 +160,10 @@ class BackendSession:
                     train_lm_head_adamw = self._library.spaceslug_tiny_forward_train_lm_head_adamw
                     train_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
                     train_lm_head_adamw.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_train_qkv_adamw_from_gradients"):
+                     function = self._library.spaceslug_tiny_forward_train_qkv_adamw_from_gradients
+                     function.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+                     function.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_base_checkpoint_create"):
                     checkpoint_create = self._library.spaceslug_tiny_base_checkpoint_create
                     checkpoint_create.argtypes = []
@@ -383,6 +387,7 @@ class BackendSession:
         graph_qkv_training_methods = False
         graph_lm_head_adamw = False
         graph_output_adamw = False
+        graph_qkv_adamw = False
         if self._library_path.is_file():
             try:
                 native = self._native()
@@ -399,6 +404,11 @@ class BackendSession:
                 "spaceslug_tiny_forward_train_output_adamw",
                 "spaceslug_tiny_forward_readback_base_train_output_adamw_state",
                 "spaceslug_tiny_forward_update_base_train_output_adamw_state",
+                ))
+                graph_qkv_adamw = all(hasattr(native, name) for name in (
+                "spaceslug_tiny_forward_train_qkv_adamw_from_gradients",
+                "spaceslug_tiny_forward_readback_base_train_qkv_adamw_state",
+                "spaceslug_tiny_forward_update_base_train_qkv_adamw_state",
                 ))
                 graph_lm_head_adamw = all(hasattr(native, name) for name in (
                 "spaceslug_tiny_forward_train_lm_head_adamw",
@@ -428,6 +438,7 @@ class BackendSession:
                      "tiny_graph_integrated_qkv_sgd": integrated_tiny_lm_head_capability(group="qkv", available=graph_qkv_training_methods, runtime_capability=graph_lm_head_capability),
                      "tiny_graph_integrated_lm_head_adamw": integrated_tiny_lm_head_adamw_capability(available=graph_lm_head_adamw, runtime_capability=graph_lm_head_capability),
                       "tiny_graph_integrated_output_adamw": integrated_tiny_group_adamw_capability(group="output", available=graph_output_adamw, runtime_capability=graph_lm_head_capability),
+                     "tiny_graph_integrated_qkv_adamw": integrated_tiny_group_adamw_capability(group="qkv", available=graph_qkv_adamw, runtime_capability=graph_lm_head_capability),
                     "tiny_forward_token_count": 128 if native_retained else None,
                     "tiny_forward_loss_token_count": 128 if native_retained_loss else None,
                     "tiny_forward_loss_target_count": 128 if native_retained_loss else None,
@@ -969,6 +980,17 @@ class BackendSession:
         code = fn(handle, *pointers, len(tokens), learning_rate, beta1, beta2, epsilon, weight_decay)
         if code != 0:
             raise BackendError(f"integrated graph {group} AdamW returned {code}")
+
+    def train_tiny_graph_qkv_adamw(self, handle: ctypes.c_void_p, learning_rate: float, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8, weight_decay: float = 0.0) -> None:
+        """Apply QKV AdamW to gradients already produced by graph backward."""
+        if learning_rate <= 0.0 or not 0.0 <= beta1 < 1.0 or not 0.0 <= beta2 < 1.0 or epsilon <= 0.0 or weight_decay < 0.0:
+            raise ValueError("invalid Tiny graph QKV AdamW hyperparameters")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_qkv_adamw_from_gradients", None)
+        if fn is None:
+            raise BackendError("integrated graph QKV AdamW ABI unavailable (return code -4)")
+        code = fn(handle, learning_rate, beta1, beta2, epsilon, weight_decay)
+        if code != 0:
+            raise BackendError(f"integrated graph QKV AdamW returned {code}")
 
     def train_tiny_graph_lm_head_adamw(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float, beta1: float = 0.9, beta2: float = 0.999, epsilon: float = 1e-8, weight_decay: float = 0.0) -> None:
         """Run graph-owned Tiny LM-head AdamW when all runtime symbols exist."""

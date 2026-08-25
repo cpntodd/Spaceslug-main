@@ -259,7 +259,11 @@ class PersistentTinyTrainer:
         payload = readback(self.handle)
         payload.update({"format": "spaceslug-tiny-graph-base-checkpoint", "schema_version": 1,
                         "dataset_device_resident": False, "retained_training": False,
-                        "qkv_adamw_unsupported": True})
+                        "qkv_adamw_unsupported": False,
+                        "qkv_adamw_gradient_source": "existing-qkv-gradients",
+                        "qkv_adamw_recomputes_or_sgd": False,
+                        "qkv_adamw_dataset_training": False,
+                        "qkv_adamw_retained_training": False})
         Path(path).write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
     @classmethod

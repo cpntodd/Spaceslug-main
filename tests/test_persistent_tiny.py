@@ -37,7 +37,7 @@ class _Backend:
                 "lm_head": [1.0], "lm_head_m": [0.1], "lm_head_v": [0.2],
                 "output": [2.0], "output_m": [0.3], "output_v": [0.4]}
     def update_tiny_graph_base_checkpoint(self, handle, checkpoint):
-        self.calls.append(("base_restore", checkpoint["group_mask"], checkpoint["qkv_adamw_unsupported"]))
+        self.calls.append(("base_restore", checkpoint["group_mask"], checkpoint["qkv_adamw_unsupported"], checkpoint["qkv_adamw_gradient_source"]))
     def execute_tiny_fixed_retained_loss(self, handle, tokens, targets, mask):
         self.calls.append(("fixed_forward_loss", len(tokens), len(targets), len(mask)))
         class Result:
@@ -73,9 +73,10 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             self.assertEqual(payload["format"], "spaceslug-tiny-graph-base-checkpoint")
             self.assertFalse(payload["dataset_device_resident"])
             self.assertFalse(payload["retained_training"])
-            self.assertTrue(payload["qkv_adamw_unsupported"])
+            self.assertFalse(payload["qkv_adamw_unsupported"])
+            self.assertEqual(payload["qkv_adamw_gradient_source"], "existing-qkv-gradients")
             resumed = PersistentTinyTrainer.resume_base(_Backend(), Model(), Adapter(), path)
-            self.assertIn(("base_restore", 3, True), resumed.backend.calls)
+            self.assertIn(("base_restore", 3, False, "existing-qkv-gradients"), resumed.backend.calls)
             trainer.close(); resumed.close()
 
     def test_fixed_contract_accumulates_then_finalizes(self):

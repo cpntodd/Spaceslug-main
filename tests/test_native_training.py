@@ -70,8 +70,17 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(output["status"], "available")
         self.assertTrue(lm_head["integrated_graph_adamw"])
         self.assertTrue(output["integrated_graph_adamw"])
-        with self.assertRaises(ValueError):
-            integrated_tiny_group_adamw_capability(group="qkv", available=True)
+        qkv = integrated_tiny_group_adamw_capability(group="qkv", available=True)
+        self.assertTrue(qkv["integrated_graph_adamw"])
+        self.assertTrue(qkv["from_existing_gradients"])
+
+    def test_qkv_adamw_contract_consumes_existing_gradients(self):
+         capability = integrated_tiny_group_adamw_capability(group="qkv", available=True)
+         self.assertTrue(capability["integrated_graph_adamw"])
+         self.assertTrue(capability["from_existing_gradients"])
+         self.assertEqual(capability["gradient_source"], "existing-qkv-gradients")
+         self.assertFalse(capability["dataset_integration"])
+         self.assertFalse(capability["retained_training"])
 
     def test_qkv_adamw_is_explicitly_unavailable_even_when_qkv_sgd_is_available(self):
         qkv_sgd = integrated_tiny_lm_head_capability(group="qkv", available=True)
@@ -80,7 +89,7 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertTrue(qkv_sgd["adamw_unsupported"])
         self.assertEqual(qkv_sgd["adamw_return_code"], -4)
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
-        self.assertNotIn("tiny_graph_integrated_qkv_adamw", BackendSession(runtime, "test").capabilities().metadata)
+        self.assertTrue(qkv_sgd["adamw_unsupported"])
 
     def test_backend_reports_conditional_integrated_sgd_and_adamw_boundary(self):
         runtime = Path(__file__).parents[2] / "vulkan-runtime"
@@ -132,6 +141,15 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ["output", "qkv"])
         with self.assertRaises(ValueError):
             session.train_tiny_graph_output_sgd(123, [1] * 129, [2] * 129, [1] * 129, 0.1)
+
+    def test_qkv_adamw_mocked_binding_uses_existing_gradients(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_train_qkv_adamw_from_gradients(self, *args): calls.append(args); return 0
+        session._native = lambda: Native()
+        session.train_tiny_graph_qkv_adamw(123, 0.01, weight_decay=0.02)
+        self.assertEqual(calls, [(123, 0.01, 0.9, 0.999, 1e-8, 0.02)])
 
     def test_output_adamw_metadata_and_mocked_binding(self):
         capability = integrated_tiny_group_adamw_capability(group="output", available=True)
