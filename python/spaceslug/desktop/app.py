@@ -15,11 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 from typing import Any
 
-from .controller import (
-    TAB_NAMES,
-    DesktopController,
-    detect_code_revision,
-)
+from .controller import DesktopController, detect_code_revision
 from .profile import fixed_tiny_profile_lines
 
 _LOSS_CANVAS_WIDTH = 480

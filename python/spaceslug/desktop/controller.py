@@ -19,10 +19,11 @@ import queue
 import subprocess
 import threading
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from ..dataset import verify_bundle
 from ..filesystem_picker import FileSelection, pick_files
@@ -190,7 +191,7 @@ class DesktopController:
         self._training_error: BaseException | None = None
         self._training_result: dict | None = None
         self._training_paths: TrainingJobPaths | None = None
-        self._loss_queue: "queue.Queue[tuple[int, float]]" = queue.Queue()
+        self._loss_queue: queue.Queue[tuple[int, float]] = queue.Queue()
         self._cancel_event = threading.Event()
 
         # Chat and API workflow state.

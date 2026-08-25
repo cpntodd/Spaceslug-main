@@ -3,9 +3,9 @@ import sys
 import unittest
 
 from spaceslug.desktop import (
+    TAB_NAMES,
     DesktopController,
     LossWormGraph,
-    TAB_NAMES,
     TrainingPlacement,
     default_runtime_probe,
     fixed_tiny_profile,
@@ -271,6 +271,7 @@ def _display_available() -> bool:
 class DesktopAppTest(unittest.TestCase):
     def test_app_builds_tabs_and_renders_loss(self):
         import tkinter as tk
+
         from spaceslug.desktop import DesktopApp
 
         try:

@@ -30,13 +30,13 @@ from .runtime import (
 
 __all__ = [
     "CAPABILITY_BOUNDARIES",
+    "RUNTIME_ROOT",
+    "TAB_NAMES",
+    "TINY_PROFILE_ID",
     "DesktopApp",
     "DesktopController",
     "LossWormGraph",
-    "RUNTIME_ROOT",
     "RuntimePlacement",
-    "TAB_NAMES",
-    "TINY_PROFILE_ID",
     "TrainingPlacement",
     "backend_runtime_probe",
     "default_runtime_probe",

@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import hashlib
 import json
-from pathlib import Path
 import time
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
+from .acceptance_status import classify_report
 from .batching import target_only_batches
 from .dataset import DatasetBundle, create_bundle
-from .projected_attention_reference import ProjectedTinyAttentionModel
-from .tokenizer import ByteTokenizer
 from .projected_attention_artifact import write_projected_artifact
 from .projected_attention_experiment import write_projected_experiment
 from .projected_attention_inference import next_token
+from .projected_attention_reference import ProjectedTinyAttentionModel
 from .quality_metrics import token_accuracy
-from .acceptance_status import classify_report
+from .tokenizer import ByteTokenizer
 
 
 @dataclass(frozen=True)

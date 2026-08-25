@@ -1,11 +1,17 @@
 import json
 import tempfile
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from spaceslug.dataset import create_bundle, verify_bundle
 from spaceslug.projected_attention_experiment import write_projected_experiment
-from spaceslug.projected_attention_training import ProjectedAttentionConfig, load_projected_checkpoint, run_projected_training, save_projected_checkpoint, train_projected_attention
+from spaceslug.projected_attention_training import (
+    ProjectedAttentionConfig,
+    load_projected_checkpoint,
+    run_projected_training,
+    save_projected_checkpoint,
+    train_projected_attention,
+)
 from spaceslug.tokenizer import default_tokenizer
 
 

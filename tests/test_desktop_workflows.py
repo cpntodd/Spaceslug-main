@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 from spaceslug.dataset import verify_bundle
 from spaceslug.desktop import DesktopController
@@ -12,8 +13,8 @@ from spaceslug.workspace import IngestionError, LicenseRequiredError
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
-    routes: dict = {}
-    requests: list = []
+    routes: ClassVar[dict] = {}
+    requests: ClassVar[list] = []
 
     def do_GET(self):
         self.__class__.requests.append(self.path)
