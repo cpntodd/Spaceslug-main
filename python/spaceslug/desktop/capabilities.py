@@ -1,0 +1,106 @@
+"""Accurate capability statements for the Phase 1 desktop shell.
+
+These strings are assembled from the live capability metadata already exported by
+the model/training modules rather than re-stating a stale snapshot.  They reflect
+the corrected Tiny boundaries (STAGED_ROADMAP.md, revision ``8474903``): graph-owned
+AdamW is available for the LM-head, output projection, and combined Q/K/V, and the
+two fixed Tiny profiles are not described as blanket "frozen base" (only the LoRA
+adapter path freezes base weights).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..gpu_lora_training import gpu_lora_capability, persistent_tiny_capability
+from ..native_training import native_fp32_lm_head_capability
+
+
+def structured_capabilities() -> dict[str, Any]:
+    """Assemble the current capability facts from the live metadata functions."""
+    lora = gpu_lora_capability()
+    persistent = persistent_tiny_capability()
+    standalone = native_fp32_lm_head_capability()
+    return {
+        "gpu_lora": {
+            "status": lora["status"],
+            "production_status": lora["production_status"],
+            "base_weights": lora["base_weights"],  # frozen for the LoRA adapter path
+            "optimizers": list(lora["optimizers"]),
+            "supported_tiny_profiles": list(lora["supported_tiny_profiles"]),
+            "dataset_training": lora["dataset_training"],
+        },
+        "persistent_tiny": {
+            "status": persistent["status"],
+            "production_status": persistent["production_status"],
+            "optimizers": list(persistent["optimizers"]),
+            "native_adamw_state_checkpoint": persistent["native_adamw_state_checkpoint"],
+            "fixed_forward_tokens": persistent["fixed_forward_tokens"],
+            "dataset_device_resident": persistent["dataset_device_resident"],
+        },
+        "native_fp32_base": {
+            "status": standalone["status"],
+            "trainable_parameter_groups": list(standalone["trainable_parameter_groups"]),
+            "frozen_parameter_groups": list(standalone["frozen_parameter_groups"]),
+            "dataset_training": standalone["dataset_training"],
+        },
+    }
+
+
+def training_capability_text() -> str:
+    return (
+        "CPU projected Tiny training is wired end-to-end in the desktop: it runs in a "
+        "background worker thread with a live per-step loss callback and writes a "
+        "checkpoint, a checksummed artifact, and an experiment record. CPU reference "
+        "training is authoritative: deterministic dataset-backed projected-attention "
+        "training (AdamW), masked causal loss, checkpoint/resume, held-out metrics, and "
+        "deterministic inference.\n\n"
+        "GPU training is bounded to the two fixed Tiny profiles "
+        "tiny_h64_v259_vp320_t128_rank4 and tiny_h64_v259_vp320_t128_rank8 "
+        "(fp32, H=64, V=259, Vp=320, T=128); only the LoRA rank differs (4 or 8). "
+        "Unlisted shapes and ranks are rejected, never coerced. The LoRA adapter path "
+        "trains with frozen base weights using SGD and, when the native ABI exposes it, "
+        "AdamW.\n\n"
+        "Graph-owned SGD is available for token embeddings, the LM-head, output "
+        "projection, and combined Q/K/V for 1..128 rows. Graph-owned AdamW is available "
+        "for the LM-head, output projection, and combined Q/K/V (QKV applies AdamW to "
+        "existing gradients) with persistent state and unified checkpoint/resume.\n\n"
+        "Positions, FFN, and normalization are unsupported; dataset-resident training "
+        "remains bounded by its documented group/path contract, and the retained-command "
+        "path is fixed forward/loss only. FP16 is storage-only. CPU is the transparent "
+        "fallback outside the bounded GPU path; the GPU is primary only for a supported "
+        "native operation selected by a job."
+    )
+
+
+def chat_capability_text() -> str:
+    return (
+        "Interact uses the injected responder (default: the CPU Tiny attention echo "
+        "responder, spaceslug.openai_api.TinyCpuEchoResponder): a deterministic, "
+        "non-generative, echo-safe CPU reference that reports a single argmax "
+        "next-token prediction and truthfully names its backend (cpu-tiny) and model "
+        "(spaceslug-tiny-attention-v1). It never fabricates natural-language "
+        "completions, and streaming is not supported."
+    )
+
+
+def api_capability_text() -> str:
+    return (
+        "The Local API is the committed loopback-only OpenAI-compatible HTTP service "
+        "(spaceslug.openai_api.OpenAICompatibleServer) with start/stop controls in the "
+        "desktop. It binds to 127.0.0.1/::1/localhost and serves GET /health, "
+        "GET /v1/models, and POST /v1/chat/completions in OpenAI shape. Only "
+        "non-streaming completions are supported; streaming requests are rejected "
+        "explicitly."
+    )
+
+
+def datasets_capability_text() -> str:
+    return (
+        "Datasets uses the committed headless workspace service "
+        "(spaceslug.workspace.WorkspaceService): local .txt/.md/.jsonl import, "
+        "HTTP(S) URL import only after explicit approval, SearXNG-compatible search "
+        "(results are never auto-fetched), license confirmation before ingest, "
+        "content-addressed SHA-256 staging, and deterministic .dts bundle creation. "
+        "PDF files are selectable but PDF-to-text extraction is not implemented yet."
+    )

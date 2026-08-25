@@ -45,6 +45,32 @@ class RuntimePlacement:
         }
 
 
+@dataclass(frozen=True)
+class TrainingPlacement:
+    """Requested vs. actual placement for a training job.
+
+    ``requested`` records what the user asked for (``gpu-primary`` or ``cpu``).
+    ``actual`` records what the job really runs on. In Phase 1 the projected
+    Tiny training job always resolves to ``cpu-fallback`` even when a hardware
+    GPU primary is present, because dataset-integrated GPU training is not yet
+    available and CPU remains authoritative. ``hardware`` keeps the resolved
+    hardware capability separate so the two facts are never conflated.
+    """
+
+    requested: str
+    actual: str
+    hardware: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requested": self.requested,
+            "actual": self.actual,
+            "hardware": self.hardware,
+            "reason": self.reason,
+        }
+
+
 def default_runtime_probe() -> dict[str, Any]:
     """Static probe that never spawns a process or loads the native library."""
     return {
@@ -102,3 +128,21 @@ def resolve_placement(probe: dict[str, Any]) -> RuntimePlacement:
         cpu_fallback=True,
         reason=reason,
     )
+
+
+def resolve_training_placement(requested_gpu_primary: bool, runtime: RuntimePlacement) -> TrainingPlacement:
+    """Resolve the requested vs. actual placement for a projected Tiny training job.
+
+    The request is honored as a recorded intent only. Phase 1 has no
+    dataset-integrated GPU training path, so the actual placement is always
+    ``cpu-fallback`` (the CPU reference is authoritative) regardless of the
+    hardware capability reported in *runtime*. This keeps the GPU-primary
+    claim honest: it is never shown as actual until that path truly exists.
+    """
+    requested = "gpu-primary" if requested_gpu_primary else "cpu"
+    actual = "cpu-fallback"
+    reason = (
+        "dataset-integrated GPU training is not yet available; CPU projected "
+        f"Tiny training is authoritative (hardware={runtime.mode})"
+    )
+    return TrainingPlacement(requested=requested, actual=actual, hardware=runtime.mode, reason=reason)

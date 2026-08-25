@@ -9,15 +9,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from .controller import CAPABILITY_BOUNDARIES, TAB_NAMES, DesktopController
+from .controller import (
+    CAPABILITY_BOUNDARIES,
+    TAB_NAMES,
+    DesktopController,
+    detect_code_revision,
+    parse_api_address,
+)
 from .loss_graph import LossWormGraph
 from .profile import TINY_PROFILE_ID, fixed_tiny_profile, fixed_tiny_profile_lines
 from .runtime import (
     RUNTIME_ROOT,
     RuntimePlacement,
+    TrainingPlacement,
     backend_runtime_probe,
     default_runtime_probe,
     resolve_placement,
+    resolve_training_placement,
 )
 
 __all__ = [
@@ -29,11 +37,15 @@ __all__ = [
     "RuntimePlacement",
     "TAB_NAMES",
     "TINY_PROFILE_ID",
+    "TrainingPlacement",
     "backend_runtime_probe",
     "default_runtime_probe",
+    "detect_code_revision",
     "fixed_tiny_profile",
     "fixed_tiny_profile_lines",
+    "parse_api_address",
     "resolve_placement",
+    "resolve_training_placement",
     "run_desktop",
 ]
 

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 from pathlib import Path
 import time
-from typing import Callable
+from typing import Callable, Iterable
 
 from .batching import target_only_batches
-from .dataset import DatasetBundle
+from .dataset import DatasetBundle, create_bundle
 from .projected_attention_reference import ProjectedTinyAttentionModel
 from .tokenizer import ByteTokenizer
 from .projected_attention_artifact import write_projected_artifact
@@ -42,7 +43,8 @@ class ProjectedAttentionConfig:
 
 def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionConfig, *, tokenizer: ByteTokenizer,
                               model: ProjectedTinyAttentionModel | None = None, prior_steps: int = 0, optimizer_state: dict | None = None,
-                              on_step: Callable[[int, float], None] | None = None) -> tuple[ProjectedTinyAttentionModel, dict, dict]:
+                              on_step: Callable[[int, float], None] | None = None,
+                              should_stop: Callable[[], bool] | None = None) -> tuple[ProjectedTinyAttentionModel, dict, dict]:
     config.validate()
     records = bundle.records("train")
     batches = target_only_batches(records, tokenizer, config.batch_size)
@@ -61,6 +63,9 @@ def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionC
         current_loss = sum(model.loss(batch) for batch in batches) / len(batches)
         if on_step is not None:
             on_step(prior_steps + completed_steps, current_loss)
+        if should_stop is not None and should_stop():
+            stopped_reason = "cancelled"
+            break
         if current_loss < best_loss:
             best_loss, stale_steps = current_loss, 0
         else:
@@ -117,6 +122,8 @@ def run_projected_training(
     experiment: str | Path,
     resume: str | Path | None = None,
     code_revision: str = "unrecorded",
+    on_step: Callable[[int, float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict:
     model = None
     prior_steps = 0
@@ -125,7 +132,7 @@ def run_projected_training(
         model, previous_metrics, optimizer_state = load_projected_checkpoint(resume)
         _assert_resume_compatible(previous_metrics, bundle, config, tokenizer)
         prior_steps = int(previous_metrics["optimizer_step"])
-    model, optimizer_state, metrics = train_projected_attention(bundle, config, tokenizer=tokenizer, model=model, prior_steps=prior_steps, optimizer_state=optimizer_state)
+    model, optimizer_state, metrics = train_projected_attention(bundle, config, tokenizer=tokenizer, model=model, prior_steps=prior_steps, optimizer_state=optimizer_state, on_step=on_step, should_stop=should_stop)
     save_projected_checkpoint(checkpoint, model, optimizer_state, metrics)
     manifest = write_projected_artifact(artifact, model, tokenizer)
     metrics = dict(metrics)
@@ -146,3 +153,56 @@ def load_projected_checkpoint(path: str | Path) -> tuple[ProjectedTinyAttentionM
     for name in ("embedding", "query", "key", "value", "output", "lm_head"):
         setattr(model, name, data[name])
     return model, payload["metrics"], payload["optimizer"]
+
+
+def prompt_target_records_from_text(records: Iterable[dict], *, prompt: str = "") -> list[dict]:
+    """Derive teacher-forced ``prompt``/``target`` records from ingested text.
+
+    Ingested workspace records carry a lossless ``text`` field. The projected
+    Tiny attention trainer consumes ``prompt``/``target`` pairs, so each text
+    record becomes a single completion target (with *prompt* as an optional
+    fixed prefix). The target is the full record text, which yields ordinary
+    byte-level next-token teacher forcing when tokenized. No text is truncated
+    or summarized; empty-text records are skipped.
+    """
+    derived: list[dict] = []
+    for index, record in enumerate(records):
+        text = record.get("text") if isinstance(record, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            continue
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            record_id = "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+        derived.append({"record_id": record_id, "prompt": prompt, "target": text})
+    if not derived:
+        raise ValueError("no text records to derive prompt/target training records")
+    return derived
+
+
+def build_training_bundle(source: DatasetBundle, output: str | Path, *, prompt: str = "") -> DatasetBundle:
+    """Derive a prompt/target training ``.dts`` from a canonical text bundle.
+
+    The canonical bundle (produced by the workspace service) keeps lossless text
+    records and provenance. This function writes a derived bundle whose records
+    are the teacher-forced ``prompt``/``target`` pairs the projected Tiny
+    attention trainer consumes, preserving the source and license provenance.
+    """
+    source_id = source.manifest["dataset_id"]
+    provenance = source.manifest["provenance"]
+    splits = {
+        "train": prompt_target_records_from_text(source.records("train"), prompt=prompt),
+        "validation": prompt_target_records_from_text(source.records("validation"), prompt=prompt) if source.stats()["validation"] else [],
+        "test": prompt_target_records_from_text(source.records("test"), prompt=prompt) if source.stats()["test"] else [],
+    }
+    return create_bundle(
+        output,
+        f"{source_id}-train",
+        splits,
+        tokenizer_id="spaceslug-byte",
+        tokenizer_revision="v1",
+        preprocessing_pipeline="spaceslug-prompt-target",
+        preprocessing_revision="phase-1",
+        seed=0,
+        sources=provenance["sources"],
+        licenses=provenance["licenses"],
+    )

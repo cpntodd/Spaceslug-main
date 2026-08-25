@@ -84,6 +84,19 @@ class ProjectedAttentionTrainingTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "dataset revision"):
                 run_projected_training(second_bundle, ProjectedAttentionConfig(steps=1, learning_rate=0.1), tokenizer=tokenizer, checkpoint=root / "next.json", artifact=root / "next.spaceslug", experiment=root / "next-run", resume=checkpoint)
 
+    def test_should_stop_reports_cancelled_and_stops_early(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = verify_bundle(create_bundle(Path(directory) / "fixture.dts", "cancel", {
+                "train": [{"record_id": "a", "prompt": "Q: ", "target": "a"}], "validation": [], "test": [],
+            }).root)
+            calls = []
+            def stop_after_two():
+                calls.append(True)
+                return len(calls) >= 2
+            _, _, metrics = train_projected_attention(bundle, ProjectedAttentionConfig(steps=10, learning_rate=0.1), tokenizer=default_tokenizer(), should_stop=stop_after_two)
+            self.assertEqual(metrics["stopped_reason"], "cancelled")
+            self.assertEqual(metrics["completed_steps"], 2)
+
     def test_resume_matches_uninterrupted_projected_training(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

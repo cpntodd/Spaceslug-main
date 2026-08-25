@@ -6,10 +6,13 @@ from spaceslug.desktop import (
     DesktopController,
     LossWormGraph,
     TAB_NAMES,
+    TrainingPlacement,
     default_runtime_probe,
     fixed_tiny_profile,
     fixed_tiny_profile_lines,
+    parse_api_address,
     resolve_placement,
+    resolve_training_placement,
 )
 
 
@@ -41,6 +44,9 @@ class DesktopControllerTest(unittest.TestCase):
         self.assertIn("training", snapshot["capabilities"])
         # Snapshot must not touch the runtime probe.
         self.assertEqual(snapshot["placement"]["reason"], "runtime not probed yet")
+        self.assertEqual(snapshot["training_placement"]["actual"], "cpu-fallback")
+        self.assertEqual(snapshot["training"]["state"], "idle")
+        self.assertFalse(snapshot["api"]["running"])
 
     def test_tabs_validate(self):
         controller = DesktopController()
@@ -62,12 +68,18 @@ class DesktopControllerTest(unittest.TestCase):
         controller.set_dataset_file("/tmp/x.dts")
         controller.set_dataset_url("https://example.test/data.dts")
         controller.set_dataset_search("tiny")
+        controller.set_dataset_license("MIT")
+        controller.set_dataset_id("my-ds")
+        controller.set_searxng_base_url("http://127.0.0.1:9999")
         controller.set_chat_prompt("hello")
         controller.set_api_address("127.0.0.1:9000")
         snapshot = controller.snapshot()
         self.assertEqual(snapshot["dataset_file"], "/tmp/x.dts")
         self.assertEqual(snapshot["dataset_url"], "https://example.test/data.dts")
         self.assertEqual(snapshot["dataset_search"], "tiny")
+        self.assertEqual(snapshot["dataset_license"], "MIT")
+        self.assertEqual(snapshot["dataset_id"], "my-ds")
+        self.assertEqual(snapshot["searxng_base_url"], "http://127.0.0.1:9999")
         self.assertEqual(snapshot["chat_prompt"], "hello")
         self.assertEqual(snapshot["api_address"], "127.0.0.1:9000")
 
@@ -78,14 +90,38 @@ class DesktopControllerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller.set_training_steps(0)
 
-    def test_capability_boundaries_are_explicit(self):
+    def test_training_hyperparameters_validate(self):
         controller = DesktopController()
-        for area in ("training", "chat", "api"):
+        controller.set_training_learning_rate(0.5)
+        controller.set_training_batch_size(4)
+        self.assertEqual(controller.training_learning_rate, 0.5)
+        self.assertEqual(controller.training_batch_size, 4)
+        with self.assertRaises(ValueError):
+            controller.set_training_learning_rate(0.0)
+        with self.assertRaises(ValueError):
+            controller.set_training_batch_size(0)
+
+    def test_capability_boundaries_describe_wired_workflows(self):
+        controller = DesktopController()
+        for area in ("training", "chat", "api", "datasets"):
             text = controller.capability_boundary(area)
             self.assertTrue(text.strip())
-        self.assertIn("fixed Tiny profiles", controller.capability_boundary("training"))
-        self.assertIn("not implemented", controller.capability_boundary("chat"))
-        self.assertIn("No server or API implementation", controller.capability_boundary("api"))
+        self.assertIn("CPU", controller.capability_boundary("training"))
+        self.assertIn("checkpoint", controller.capability_boundary("training"))
+        self.assertIn("responder", controller.capability_boundary("chat"))
+        self.assertIn("TinyCpuEchoResponder", controller.capability_boundary("chat"))
+        self.assertIn("loopback", controller.capability_boundary("api"))
+        self.assertIn("OpenAICompatibleServer", controller.capability_boundary("api"))
+        self.assertIn("workspace", controller.capability_boundary("datasets"))
+
+    def test_structured_capabilities_are_assembled_from_metadata(self):
+        controller = DesktopController()
+        structured = controller.capabilities()
+        self.assertIn("gpu_lora", structured)
+        self.assertIn("persistent_tiny", structured)
+        self.assertIn("native_fp32_base", structured)
+        self.assertIn("dataset_training", structured["gpu_lora"])
+        self.assertIn("optimizers", structured["gpu_lora"])
 
     def test_refresh_runtime_uses_injected_probe(self):
         def probe():
@@ -103,6 +139,26 @@ class DesktopControllerTest(unittest.TestCase):
         self.assertTrue(placement.gpu_primary)
         self.assertTrue(placement.cpu_fallback)
         self.assertEqual(controller.snapshot()["placement"]["device"], "AMD Radeon RX 580")
+
+    def test_gpu_primary_requested_is_never_actual_until_available(self):
+        def probe():
+            return {"device": "AMD Radeon RX 580", "operations": ["sgemm"], "software_vulkan": False}
+
+        controller = DesktopController(runtime_probe=probe)
+        controller.refresh_runtime()
+        controller.set_gpu_primary_requested(True)
+        placement = controller.training_placement()
+        self.assertEqual(placement.requested, "gpu-primary")
+        self.assertEqual(placement.actual, "cpu-fallback")
+        self.assertEqual(placement.hardware, "gpu-primary")
+        self.assertIn("dataset-integrated GPU training", placement.reason)
+
+    def test_gpu_primary_can_be_not_requested(self):
+        controller = DesktopController()
+        controller.set_gpu_primary_requested(False)
+        placement = controller.training_placement()
+        self.assertEqual(placement.requested, "cpu")
+        self.assertEqual(placement.actual, "cpu-fallback")
 
 
 class DesktopProfileTest(unittest.TestCase):
@@ -148,8 +204,6 @@ class LossWormGraphTest(unittest.TestCase):
         graph = LossWormGraph(history=[3.0])
         points = graph.scaled_points(100, 50, padding=5)
         self.assertEqual(len(points), 1)
-        # A flat single-value series pins the value to the bottom of the band
-        # (padding + inner height) rather than dividing by a zero span.
         self.assertEqual(points[0], (5.0, 45.0))
 
     def test_empty_series_returns_no_points(self):
@@ -187,6 +241,24 @@ class RuntimePlacementTest(unittest.TestCase):
         placement = resolve_placement({"device": None, "operations": [], "software_vulkan": False})
         self.assertEqual(placement.mode, "cpu-fallback")
         self.assertFalse(placement.gpu_primary)
+
+    def test_training_placement_is_cpu_fallback_until_integrated_gpu(self):
+        runtime = resolve_placement(
+            {"device": "AMD Radeon RX 580", "operations": ["sgemm"], "software_vulkan": False}
+        )
+        placement = resolve_training_placement(True, runtime)
+        self.assertIsInstance(placement, TrainingPlacement)
+        self.assertEqual(placement.requested, "gpu-primary")
+        self.assertEqual(placement.actual, "cpu-fallback")
+        self.assertEqual(placement.hardware, "gpu-primary")
+
+    def test_parse_api_address(self):
+        self.assertEqual(parse_api_address("127.0.0.1:8123"), ("127.0.0.1", 8123))
+        self.assertEqual(parse_api_address("127.0.0.1:0"), ("127.0.0.1", 0))
+        self.assertEqual(parse_api_address("localhost"), ("localhost", 8123))
+        for bad in ("0.0.0.0:8123", "127.0.0.1:notaport", "127.0.0.1:99999", ""):
+            with self.assertRaises(ValueError):
+                parse_api_address(bad)
 
 
 def _display_available() -> bool:
