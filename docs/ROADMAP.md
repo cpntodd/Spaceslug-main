@@ -1,5 +1,7 @@
 # Implementation roadmap
 
+> **Note:** This file is the broader historical phase list. The **approved staged implementation sequence** — with only Phase 1 (GUI + current Tiny) authorized now and the fixed Tiny boundaries preserved — is recorded in [`STAGED_ROADMAP.md`](STAGED_ROADMAP.md). Where this list differs from that document on sequencing, the staged roadmap is authoritative.
+
 ## Current Tiny graph optimizer status
 
 The graph-owned Tiny path currently integrates fixed-window AdamW for the **LM-head** and **output projection**. QKV AdamW is **not implemented or available**: exactly two implementation attempts were rejected because verification was incomplete. QKV remains SGD-only, and its AdamW capability must not be inferred from standalone projection APIs or from the LM-head/output AdamW contracts. This status is limited to the existing bounded graph path and does not claim full-parameter or dataset training.

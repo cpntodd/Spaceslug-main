@@ -45,7 +45,7 @@ The proposed Spaceslug Dataset Bundle (`.dts`) preserves lossless canonical reco
 5. Human approval for code changes and bounded self-improvement.
 6. Model semantics must not change silently when placement or precision changes.
 
-Read [`docs/PRODUCT.md`](docs/PRODUCT.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md) first.
+Read [`docs/PRODUCT.md`](docs/PRODUCT.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md) first. The approved staged implementation sequence — only Phase 1 (GUI + current Tiny) is authorized now — is recorded in [`docs/STAGED_ROADMAP.md`](docs/STAGED_ROADMAP.md).
 
 ## Repository relationships
 
