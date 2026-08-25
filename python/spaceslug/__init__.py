@@ -10,6 +10,17 @@ from .tokenizer import ByteTokenizer, default_tokenizer
 from .reference import vector_add
 from .gpu_lora_training import PersistentTinyTrainer, persistent_tiny_capability
 from .native_training import native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
+from .workspace import (
+    ImportedSource,
+    SearchResult,
+    WorkspaceService,
+    extract_text,
+    fetch_http,
+    read_local_file,
+    searxng_search,
+    sha256_bytes,
+    validate_http_url,
+)
 
 __all__ = [
     "BackendCapabilities", "BackendError", "BackendSession", "ExecutionResult",
@@ -18,4 +29,6 @@ __all__ = [
     "load_training_checkpoint", "write_tiny_artifact", "load_tiny_artifact", "ByteTokenizer",
     "default_tokenizer", "vector_add", "PersistentTinyTrainer", "persistent_tiny_capability",
     "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan",
+    "ImportedSource", "SearchResult", "WorkspaceService", "extract_text", "fetch_http",
+    "read_local_file", "searxng_search", "sha256_bytes", "validate_http_url",
 ]
