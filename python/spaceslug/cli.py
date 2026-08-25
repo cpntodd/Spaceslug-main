@@ -30,6 +30,9 @@ def parser() -> argparse.ArgumentParser:
     cli = argparse.ArgumentParser(prog="spaceslug")
     subparsers = cli.add_subparsers(dest="command", required=True)
     subparsers.add_parser("tui")
+    desktop = subparsers.add_parser("desktop")
+    desktop.add_argument("--runtime-root", type=Path, default=None)
+    desktop.add_argument("--runtime-revision", default="runtime")
     cpu_gate = subparsers.add_parser("tiny-cpu-verify")
     cpu_gate.add_argument("bundle", type=Path)
     cpu_gate.add_argument("--steps", type=int, default=2)
@@ -109,6 +112,12 @@ def main() -> int:
     if args.command == "tui":
         SpaceslugTui().run()
         return 0
+    if args.command == "desktop":
+        from .desktop.app import run_desktop
+        return run_desktop(
+            runtime_root=str(args.runtime_root) if args.runtime_root else None,
+            runtime_revision=args.runtime_revision,
+        )
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")
