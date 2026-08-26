@@ -584,6 +584,13 @@ class DesktopApp:
 
     def _refresh_training_status(self, status: dict | None = None) -> None:
         status = status or self.controller.training_status()
+        high = "—" if status["loss_high"] is None else f"{status['loss_high']:.6f}"
+        low = "—" if status["loss_low"] is None else f"{status['loss_low']:.6f}"
+        size = "—" if status["model_size_bytes"] is None else f"{status['model_size_bytes']:,} B"
+        self._training_stats_label.configure(
+            text=f"Started: {status['training_start_time'] or '—'} · Steps: {status['completed_steps']} · "
+                 f"Model: {size} · Highest loss: {high} · Lowest loss: {low}"
+        )
         placement = status["placement"]
         lines = [
             f"state: {status['state']} · mode: {status['mode']} · completed_steps: {status['completed_steps']}",
@@ -707,10 +714,6 @@ class DesktopApp:
         )
         self._redraw_loss()
         training = snapshot["training"]
-        high = "—" if training["loss_high"] is None else f"{training['loss_high']:.6f}"
-        low = "—" if training["loss_low"] is None else f"{training['loss_low']:.6f}"
-        size = "—" if training["model_size_bytes"] is None else f"{training['model_size_bytes']:,} B"
-        self._training_stats_label.configure(text=f"Started: {training['training_start_time'] or '—'} · Steps: {training['completed_steps']} · Model: {size} · Highest loss: {high} · Lowest loss: {low}" )
         self._refresh_training_status(training)
         if snapshot["training"]["state"] != "running":
             gate = snapshot["training"]["native_gpu_readiness"]
