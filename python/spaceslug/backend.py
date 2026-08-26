@@ -830,6 +830,20 @@ class BackendSession:
             raise BackendError("dataset batch buffer creation failed")
         return ctypes.c_void_p(handle)
 
+    def metrics_dataset_batch_buffer(self, handle: ctypes.c_void_p, window_count: int) -> list[float]:
+        if not 0 < window_count <= 32:
+            raise ValueError("dataset metrics require 1..32 windows")
+        fn = getattr(self._native(), "vulkan_runtime_dataset_batch_metrics", None)
+        if fn is None:
+            raise BackendError("dataset metrics ABI unavailable")
+        import array
+        output = array.array("f", [0.0] * (window_count * 2))
+        pointer = (ctypes.c_float * len(output)).from_buffer(output)
+        code = fn(handle, pointer)
+        if code != 0:
+            raise BackendError(f"dataset metrics returned {code}")
+        return output.tolist()
+
     def process_dataset_batch_buffer(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], controls: list[int], window_count: int, window_tokens: int) -> list[float]:
         """Process one rectangular batch through the standalone prototype."""
         elements = window_count * window_tokens
