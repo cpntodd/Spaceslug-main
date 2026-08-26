@@ -21,12 +21,13 @@ import threading
 import urllib.parse
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ..dataset import verify_bundle
+from ..documentation_crawler import DocumentationCrawler, CrawlSession
 from ..filesystem_picker import FileSelection, pick_files
 from ..native_desktop_training import readiness as native_gpu_readiness, run_native_training
 from ..openai_api import (
@@ -191,6 +192,11 @@ class DesktopController:
         # Dataset workflow state.
         self.dataset_file = ""
         self.dataset_url = ""
+        self.documentation_url = ""
+        self.documentation_max_pages = 10
+        self.documentation_max_depth = 1
+        self.documentation_same_origin = True
+        self.documentation_session: CrawlSession | None = None
         self.dataset_search = ""
         self.dataset_license = ""
         self.dataset_id = "spaceslug-dataset"
@@ -378,6 +384,24 @@ class DesktopController:
 
     def set_dataset_url(self, value: str) -> None:
         self.dataset_url = value
+
+    def set_documentation_url(self, value: str) -> None:
+        self.documentation_url = value
+
+    def crawl_documentation(self, url: str | None = None, *, approve_all_same_origin: bool = False) -> CrawlSession:
+        seed = url if url is not None else self.documentation_url
+        if not seed.strip():
+            raise IngestionError("documentation URL is required")
+        crawler = DocumentationCrawler(
+            self._workspace_service(), max_pages=self.documentation_max_pages,
+            max_depth=self.documentation_max_depth, same_origin_only=self.documentation_same_origin,
+        )
+        session_path = self.paths.temp_dir / "documentation-crawl.json"
+        approved_origin = seed
+        session = crawler.start(seed, approve=(lambda candidate: approve_all_same_origin and candidate.startswith(approved_origin)), session_path=session_path)
+        self.documentation_session = session
+        self.imports.extend(item for item in self._workspace_service().list_imports() if item not in self.imports)
+        return session
 
     def set_dataset_search(self, value: str) -> None:
         self.dataset_search = value
@@ -816,6 +840,11 @@ class DesktopController:
             "workspace_paths": self.paths.to_dict(),
             "dataset_file": self.dataset_file,
             "dataset_url": self.dataset_url,
+            "documentation_url": self.documentation_url,
+            "documentation_max_pages": self.documentation_max_pages,
+            "documentation_max_depth": self.documentation_max_depth,
+            "documentation_same_origin": self.documentation_same_origin,
+            "documentation_session": None if self.documentation_session is None else asdict(self.documentation_session),
             "dataset_search": self.dataset_search,
             "dataset_license": self.dataset_license,
             "dataset_id": self.dataset_id,

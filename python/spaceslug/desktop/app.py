@@ -212,6 +212,15 @@ class DesktopApp:
         ttk.Button(row, text="Import file", command=self._import_local).pack(side="left", padx=(6, 0))
         ttk.Button(row, text="Import folder…", command=self._import_folder).pack(side="left", padx=(6, 0))
 
+        crawl_box = ttk.LabelFrame(frame, text="Controlled documentation crawl (static HTML; explicit approval)", padding=6)
+        crawl_box.pack(fill="x", pady=6)
+        row = ttk.Frame(crawl_box); row.pack(fill="x")
+        ttk.Label(row, text="Start URL:", width=14, anchor="w").pack(side="left")
+        self._variable("documentation_url", self.controller.documentation_url, self.controller.set_documentation_url)
+        ttk.Entry(row, textvariable=self._vars["documentation_url"]).pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="Crawl approved", command=self._crawl_documentation).pack(side="left", padx=(6,0))
+        self._documentation_status = self._status_label(crawl_box, "Same-origin, bounded, approval-controlled; JavaScript rendering is not enabled.")
+
         url_box = ttk.LabelFrame(frame, text="Approved URL", padding=6)
         url_box.pack(fill="x", pady=6)
         row = ttk.Frame(url_box)
@@ -393,6 +402,15 @@ class DesktopApp:
             self._datasets_status,
             f"imported local source sha256={imported.sha256} ({imported.bytes} bytes, {len(imported.records)} records)",
         )
+        self.refresh()
+
+    def _crawl_documentation(self) -> None:
+        try:
+            session = self.controller.crawl_documentation(approve_all_same_origin=True)
+        except Exception as exc:
+            self._set_label(self._documentation_status, f"crawl failed: {type(exc).__name__}: {exc}")
+            return
+        self._set_label(self._documentation_status, f"crawl complete: {len(session.fetched)} fetched, {len(session.rejected)} rejected, {len(session.errors)} errors; review session provenance before creating .dts")
         self.refresh()
 
     def _import_url(self) -> None:
