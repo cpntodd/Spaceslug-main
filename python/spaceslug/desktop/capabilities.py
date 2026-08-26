@@ -109,7 +109,7 @@ def chat_capability_text() -> str:
         "Interact starts an embedded responder at desktop launch. It uses the configured "
         "Vulkan Tiny forward path (vulkan-radv-tiny) when the fixed V=259,H=64 native "
         "contract is available, and transparently reports a CPU Tiny reference fallback "
-        "when GPU initialization is unavailable. Both paths are deterministic, "
+        "(TinyCpuEchoResponder) when GPU initialization is unavailable. Both paths are deterministic, "
         "non-generative, echo-safe single argmax next-token references; streaming is not supported."
     )
 

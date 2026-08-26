@@ -334,6 +334,8 @@ class DesktopApp:
 
         self._gpu_gate_label = self._status_label(frame)
         self._gpu_gate_label.pack(anchor="w", pady=(4, 0))
+        self._training_stats_label = self._status_label(frame)
+        self._training_stats_label.pack(anchor="w", pady=(2, 0))
         ttk.Label(frame, text="Live loss worm (fed by the training worker thread)").pack(anchor="w", pady=(4, 2))
         self._training_status_text = self._readonly_text(frame, self.controller.capability_boundary("training"), height=10)
         self._training_status_text.pack(fill="x", pady=(2, 0))
@@ -682,7 +684,12 @@ class DesktopApp:
             f" · api={'on' if api['running'] else 'off'} · training={snapshot['training']['state']}"
         )
         self._redraw_loss()
-        self._refresh_training_status(snapshot["training"])
+        training = snapshot["training"]
+        high = "—" if training["loss_high"] is None else f"{training['loss_high']:.6f}"
+        low = "—" if training["loss_low"] is None else f"{training['loss_low']:.6f}"
+        size = "—" if training["model_size_bytes"] is None else f"{training['model_size_bytes']:,} B"
+        self._training_stats_label.configure(text=f"Started: {training['training_start_time'] or '—'} · Steps: {training['completed_steps']} · Model: {size} · Highest loss: {high} · Lowest loss: {low}" )
+        self._refresh_training_status(training)
         if snapshot["training"]["state"] != "running":
             gate = snapshot["training"]["native_gpu_readiness"]
             self._gpu_train_button.configure(state="normal" if gate["ready"] else "disabled")

@@ -71,10 +71,11 @@ class LossWormGraph:
             points.append((x, y))
         return points
 
-    def draw(self, canvas: Any, width: int, height: int, *, padding: int = 8) -> None:
-        """Render the worm onto a canvas-like object."""
+    def draw(self, canvas: Any, width: int, height: int, *, padding: int = 8, start: int = 0, count: int | None = None) -> None:
+        """Render a viewport of the retained worm history."""
         canvas.delete("all")
-        points = self.scaled_points(width, height, padding=padding)
+        values = self._history[start:] if count is None else self._history[start:start + count]
+        points = LossWormGraph(values, max_points=max(1, len(values))).scaled_points(width, height, padding=padding)
         if len(points) >= 2:
             flat = [coordinate for point in points for coordinate in point]
             canvas.create_line(*flat, fill="#1f6feb", width=2, smooth=True)

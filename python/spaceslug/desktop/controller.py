@@ -15,6 +15,7 @@ and chat through an injected responder (or the server's default responder).
 
 from __future__ import annotations
 
+import json
 import queue
 import subprocess
 import threading
@@ -220,6 +221,11 @@ class DesktopController:
         self.training_rank = 4
         self.training_prompt = ""
         self.latest_loss: float | None = None
+        self.training_start_time: str | None = None
+        self.loss_high: float | None = None
+        self.loss_low: float | None = None
+        self.model_size_bytes: int | None = None
+        self.training_metadata_path: str | None = None
         self.completed_steps = 0
         self._training_thread: threading.Thread | None = None
         self._training_state = "idle"  # idle | running | finished | error
@@ -667,6 +673,12 @@ class DesktopController:
         self._training_mode = "cpu-reference"
         self._training_state = "running"
         self.latest_loss = None
+        self.loss.clear()
+        self.loss_high = None
+        self.loss_low = None
+        self.training_start_time = datetime.now(UTC).isoformat()
+        self.model_size_bytes = self._estimate_model_size()
+        self.training_metadata_path = None
         self.completed_steps = 0
         self._cancel_event.clear()
         self._training_thread = threading.Thread(
@@ -702,6 +714,12 @@ class DesktopController:
         self._training_mode = "native-gpu"
         self._training_state = "running"
         self.latest_loss = None
+        self.loss.clear()
+        self.loss_high = None
+        self.loss_low = None
+        self.training_start_time = datetime.now(UTC).isoformat()
+        self.model_size_bytes = self._estimate_model_size()
+        self.training_metadata_path = None
         self.completed_steps = 0
         self._cancel_event.clear()
         self._training_thread = threading.Thread(
@@ -745,6 +763,22 @@ class DesktopController:
             self._training_error = exc
             self._training_state = "error"
 
+    def _estimate_model_size(self) -> int:
+        profile = self.profile
+        return int(profile.get("vocab_size", 259) * profile.get("hidden_size", 64) * 4)
+
+    def _export_training_metadata(self) -> None:
+        if self._training_paths is None or self.training_start_time is None:
+            return
+        path = self._training_paths.experiment.with_suffix(".telemetry.json")
+        payload = {"run_id": self._training_paths.run_id, "start_time": self.training_start_time,
+                   "completed_steps": self.completed_steps, "requested_steps": self.training_steps,
+                   "model_size_bytes": self.model_size_bytes, "loss_high": self.loss_high,
+                   "loss_low": self.loss_low, "loss_history": self.loss.history,
+                   "mode": self._training_mode, "result": self._training_result}
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        self.training_metadata_path = str(path)
+
     def _on_training_step(self, step: int, loss: float) -> None:
         """Thread-safe per-step callback; the main thread drains the queue."""
         self._loss_queue.put((step, loss))
@@ -758,7 +792,11 @@ class DesktopController:
                 break
             self.record_loss(loss)
             self.latest_loss = loss
+            self.loss_high = loss if self.loss_high is None else max(self.loss_high, loss)
+            self.loss_low = loss if self.loss_low is None else min(self.loss_low, loss)
             self.completed_steps = step
+            if self._training_state != "running":
+                self._export_training_metadata()
         return self.training_status()
 
     def wait_training(self, timeout: float | None = None) -> dict:
@@ -783,6 +821,11 @@ class DesktopController:
             "completed_steps": self.completed_steps,
             "latest_loss": self.latest_loss,
             "loss_history": self.loss.history,
+            "training_start_time": self.training_start_time,
+            "loss_high": self.loss_high,
+            "loss_low": self.loss_low,
+            "model_size_bytes": self.model_size_bytes,
+            "training_metadata_path": self.training_metadata_path,
             "rank": self.training_rank,
             "tiny_profile": tiny_profile_id(self.training_rank),
             "placement": self.training_placement().to_dict(),
