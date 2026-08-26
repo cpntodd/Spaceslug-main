@@ -102,6 +102,23 @@ class DesktopApp:
         self._set_label(self._workspace_status, f"saved workspace paths to {self.controller.config_path}")
         self.refresh()
 
+    def _refresh_gpu_readiness(self) -> None:
+        """Refresh the safe native-runtime diagnostic from the Home tab."""
+        try:
+            self.controller.set_runtime_target(
+                self._vars["runtime_root"].get(), self._vars["runtime_revision"].get()
+            )
+            report = self.controller.refresh_gpu_readiness()
+        except Exception as exc:
+            text = f"GPU readiness check failed: {type(exc).__name__}: {exc}"
+        else:
+            text = report.summary_text()
+        self._gpu_readiness_text.configure(state="normal")
+        self._gpu_readiness_text.delete("1.0", "end")
+        self._gpu_readiness_text.insert("1.0", text)
+        self._gpu_readiness_text.configure(state="disabled")
+        self.refresh()
+
     def _build(self) -> None:
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True, padx=6, pady=6)
@@ -162,6 +179,20 @@ class DesktopApp:
         self._placement_device.pack(fill="x")
         self._placement_reason = ttk.Label(placement_box, text="", anchor="w", wraplength=740)
         self._placement_reason.pack(fill="x")
+
+        readiness_box = ttk.LabelFrame(frame, text="Native GPU readiness diagnostic", padding=8)
+        readiness_box.pack(fill="x", pady=4)
+        target = ttk.Frame(readiness_box)
+        target.pack(fill="x")
+        ttk.Label(target, text="Runtime root:", width=14, anchor="w").pack(side="left")
+        self._variable("runtime_root", self.controller.runtime_root)
+        ttk.Entry(target, textvariable=self._vars["runtime_root"]).pack(side="left", fill="x", expand=True)
+        ttk.Label(target, text="Revision:", width=9, anchor="w").pack(side="left", padx=(6, 0))
+        self._variable("runtime_revision", self.controller.runtime_revision)
+        ttk.Entry(target, textvariable=self._vars["runtime_revision"], width=12).pack(side="left")
+        ttk.Button(target, text="Refresh GPU readiness", command=self._refresh_gpu_readiness).pack(side="left", padx=(6, 0))
+        self._gpu_readiness_text = self._readonly_text(readiness_box, "Refresh to inspect the native runtime.", height=10)
+        self._gpu_readiness_text.pack(fill="x", pady=(6, 0))
 
         ttk.Label(frame, text="Tabs: Home · Datasets · Build & Train · Interact · Local API").pack(anchor="w", pady=(8, 0))
         return frame

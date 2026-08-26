@@ -50,8 +50,10 @@ from .capabilities import (
     training_capability_text,
 )
 from .loss_graph import LossWormGraph
+from .gpu_readiness import GpuReadiness, refresh_gpu_readiness_probe
 from .profile import fixed_tiny_profile, tiny_profile_id
 from .runtime import (
+    RUNTIME_ROOT,
     RuntimePlacement,
     TrainingPlacement,
     default_runtime_probe,
@@ -165,6 +167,9 @@ class DesktopController:
             reason="runtime not probed yet",
         )
         self.gpu_primary_requested = True
+        self.runtime_root = RUNTIME_ROOT
+        self.runtime_revision = "runtime"
+        self.gpu_readiness: GpuReadiness | None = None
 
         # Persisted workspace paths. An explicit workspace_root wins over any
         # persisted config so callers (and tests) stay deterministic.
@@ -232,6 +237,21 @@ class DesktopController:
 
     def runtime_status(self) -> RuntimePlacement:
         return self.placement
+
+    def set_runtime_target(self, runtime_root: str | Path, runtime_revision: str = "runtime") -> None:
+        """Set the runtime location used by the in-app readiness check."""
+        root = str(runtime_root).strip()
+        if not root:
+            raise ValueError("runtime root must not be empty")
+        self.runtime_root = root
+        self.runtime_revision = str(runtime_revision).strip() or "runtime"
+
+    def refresh_gpu_readiness(self) -> GpuReadiness:
+        """Safely inspect the configured native runtime and update placement."""
+        readiness = refresh_gpu_readiness_probe(self.runtime_root, self.runtime_revision)
+        self.gpu_readiness = readiness
+        self.placement = resolve_placement(readiness.placement_probe())
+        return readiness
 
     def set_gpu_primary_requested(self, value: bool) -> None:
         self.gpu_primary_requested = bool(value)
