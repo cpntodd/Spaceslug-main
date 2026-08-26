@@ -16,7 +16,9 @@ and chat through an injected responder (or the server's default responder).
 from __future__ import annotations
 
 import json
+import os
 import queue
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import threading
 import urllib.parse
@@ -218,6 +220,7 @@ class DesktopController:
         self.training_steps = 10
         self.training_learning_rate = 0.2
         self.training_batch_size = 1
+        self.cpu_worker_count = max(1, min(8, (os.cpu_count() or 2) - 1))
         self.training_rank = 4
         self.training_prompt = ""
         self.latest_loss: float | None = None
@@ -466,11 +469,19 @@ class DesktopController:
         selection = self.choose_local_sources(root, recursive=recursive)
         imported: list[Any] = []
         errors: list[dict[str, str]] = []
-        for path in selection.files:
-            try:
-                imported.append(self.import_local_source(path, license=license))
-            except Exception as exc:
-                errors.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
+        # Decode/import in bounded worker threads; the Tk thread is never used
+        # for this potentially large operation. Workspace state is committed in
+        # the controller thread after each worker result.
+        def load(path: Path) -> Any:
+            return self._workspace_service().import_local(path, license=self._resolve_license(license))
+        with ThreadPoolExecutor(max_workers=self.cpu_worker_count, thread_name_prefix="spaceslug-import") as pool:
+            futures = [(path, pool.submit(load, path)) for path in selection.files]
+            for path, future in futures:
+                try:
+                    item = future.result()
+                    imported.append(self._record_import(item))
+                except Exception as exc:
+                    errors.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
         return {
             "root": str(selection.root),
             "imported": imported,
@@ -592,6 +603,14 @@ class DesktopController:
         return bundle
 
     # -- training ------------------------------------------------------------
+    def set_cpu_worker_count(self, workers: int) -> None:
+        if workers <= 0 or workers > (os.cpu_count() or 1):
+            raise ValueError("CPU worker count must be within the available core count")
+        self.cpu_worker_count = workers
+
+    def cpu_execution_status(self) -> dict[str, int]:
+        return {"available_cores": os.cpu_count() or 1, "workers": self.cpu_worker_count, "reserved_for_ui": 1}
+
     def set_training_steps(self, steps: int) -> None:
         if steps <= 0:
             raise ValueError("steps must be positive")
@@ -974,6 +993,7 @@ class DesktopController:
             "training_steps": self.training_steps,
             "training_learning_rate": self.training_learning_rate,
             "training_batch_size": self.training_batch_size,
+            "cpu_execution": self.cpu_execution_status(),
             "training_rank": self.training_rank,
             "training": self.training_status(),
             "chat_prompt": self.chat_prompt,
