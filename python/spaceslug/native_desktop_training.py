@@ -166,7 +166,7 @@ def run_native_training(
                "training_execution": "full-device-batch" if device_batch_status == "ok" else "bounded-gpu-graph",
                "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status,
                "device_batch_reason": device_batch_reason, "split_record_counts": split_counts, "validation_metrics": validation_metrics,
-               "test_metrics": test_metrics}
+               "test_metrics": test_metrics, "evaluation_execution": "not-run-readonly-graph-unavailable"}
     experiment_file.write_text(json.dumps({"created_at": datetime.now(UTC).isoformat(), "backend": "vulkan-radv",
                                             "metrics": metrics}, sort_keys=True, indent=2) + "\n")
     return {"artifact_revision": revision, "experiment": str(experiment_file), "metrics": metrics,
