@@ -112,11 +112,14 @@ class TinyGpuResponder(ModelResponder):
     backend_id = "vulkan-radv-tiny"
     model_id = "spaceslug-tiny-attention-v1"
 
-    def __init__(self, backend: BackendSession, model=None, tokenizer=None, *, max_echo_chars: int = 1000):
+    def __init__(self, backend: BackendSession, model=None, tokenizer=None, *, max_echo_chars: int = 1000, max_new_tokens: int = 32):
+        if max_new_tokens <= 0 or max_new_tokens > 128:
+            raise ValueError("max_new_tokens must be between 1 and 128")
         self.backend = backend
         self.model = model if model is not None else ProjectedTinyAttentionModel(259, 64)
         self.tokenizer = tokenizer if tokenizer is not None else default_tokenizer()
         self.max_echo_chars = max_echo_chars
+        self.max_new_tokens = max_new_tokens
 
     def respond(self, messages: list[dict]) -> ResponderResult:
         prompt = last_user_text(messages)
@@ -125,12 +128,21 @@ class TinyGpuResponder(ModelResponder):
         if result.status != "ok" or not result.metrics.get("gpu_execution", False):
             raise BackendError(result.metrics.get("reason", "native GPU inference unavailable"))
         logits = result.output["logits"]
-        next_token = max(range(len(logits)), key=logits.__getitem__)
-        echo = prompt if len(prompt) <= self.max_echo_chars else prompt[:self.max_echo_chars] + "…"
+        generated = []
+        context = list(tokens)
+        for _ in range(self.max_new_tokens):
+            current = self.backend.execute_projected_attention_gpu(context[-128:], self.model)
+            if current.status != "ok" or not current.metrics.get("gpu_execution", False):
+                raise BackendError(current.metrics.get("reason", "native GPU generation unavailable"))
+            token = max(range(len(current.output["logits"])), key=current.output["logits"].__getitem__)
+            if token == self.tokenizer.eos_token:
+                break
+            generated.append(token)
+            context.append(token)
+        completion = self.tokenizer.decode(generated)
         content = (f"Spaceslug-Tiny GPU responder (backend={self.backend_id}, model={self.model_id}).\\n"
-                   "This is a deterministic, non-generative GPU reference: it reports one argmax next-token prediction.\\n\\n"
-                   f"next_token={next_token}\\necho={echo}\\n")
-        return ResponderResult(content=content, prompt_tokens=len(tokens), completion_tokens=len(self.tokenizer.encode(content, add_bos=False, add_eos=False)))
+                   f"Native Vulkan/RADV deterministic generation ({len(generated)} tokens).\\n\\n{completion}")
+        return ResponderResult(content=content, prompt_tokens=len(tokens), completion_tokens=len(generated))
 
 
 class TinyCpuEchoResponder(ModelResponder):

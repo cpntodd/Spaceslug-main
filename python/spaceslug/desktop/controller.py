@@ -246,6 +246,7 @@ class DesktopController:
         self.chat_history: list[tuple[str, str]] = []
         self.api_address = DEFAULT_API_ADDRESS
         self._server: OpenAICompatibleServer | None = None
+        self._gpu_inference_backend: BackendSession | None = None
 
     # -- tabs ----------------------------------------------------------------
     def set_active_tab(self, name: str) -> str:
@@ -887,6 +888,7 @@ class DesktopController:
         try:
             backend = BackendSession(self.runtime_root, self.runtime_revision)
             backend.capabilities()
+            self._gpu_inference_backend = backend
             self.responder = TinyGpuResponder(backend)
             self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "native Vulkan inference initialized"}
         except Exception as exc:
