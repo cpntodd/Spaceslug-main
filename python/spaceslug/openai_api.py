@@ -135,10 +135,6 @@ class TinyGpuResponder(ModelResponder):
     def respond(self, messages: list[dict]) -> ResponderResult:
         prompt = last_user_text(messages)
         tokens = self.tokenizer.encode(prompt)
-        result = self.backend.execute_projected_attention_gpu(tokens, self.model)
-        if result.status != "ok" or not result.metrics.get("gpu_execution", False):
-            raise BackendError(result.metrics.get("reason", "native GPU inference unavailable"))
-        logits = result.output["logits"]
         generated = []
         context = list(tokens)
         for _ in range(self.max_new_tokens):
