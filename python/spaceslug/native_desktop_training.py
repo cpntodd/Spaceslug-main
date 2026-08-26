@@ -151,6 +151,7 @@ def run_native_training(
         "device_batch_status": device_batch_status, "device_batch_reason": device_batch_reason,
         "split_record_counts": split_counts,
         "validation_metrics": validation_metrics, "test_metrics": test_metrics,
+        "evaluation_execution": "not-run-readonly-graph-unavailable",
     }, sort_keys=True, indent=2) + "\n")
     revision = "sha256:" + hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     # Keep the adapter checkpoint discoverable by the desktop responder.
