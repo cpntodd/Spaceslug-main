@@ -35,7 +35,7 @@ from .dataset import DatasetBundle, create_bundle
 
 DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
-ALLOWED_LOCAL_EXTENSIONS = (".txt", ".md", ".jsonl", ".pdf")
+ALLOWED_LOCAL_EXTENSIONS = (".txt", ".md", ".json", ".jsonl", ".pdf")
 _READ_CHUNK = 64 * 1024
 _USER_AGENT = "spaceslug-ingest/0.1"
 _PDFTOTEXT = "pdftotext"
@@ -219,11 +219,66 @@ def _extract_jsonl_records(data: bytes, source_id: str) -> list[dict]:
     return records
 
 
+def _discord_author(value: object) -> str:
+    if isinstance(value, Mapping):
+        for key in ("Name", "name", "Username", "username", "GlobalName", "global_name"):
+            if isinstance(value.get(key), str) and value[key].strip():
+                return value[key].strip()
+    return "unknown"
+
+
+def _discord_messages(value: object) -> list[Mapping[str, object]] | None:
+    if isinstance(value, Mapping):
+        for key in ("messages", "Messages"):
+            messages = value.get(key)
+            if isinstance(messages, list) and all(isinstance(item, Mapping) for item in messages):
+                return list(messages)
+    if isinstance(value, list) and value and all(isinstance(item, Mapping) for item in value):
+        if any(key in value[0] for key in ("Contents", "contents", "Author", "author")):
+            return list(value)
+    return None
+
+
+def _extract_discord_records(value: object, source_id: str) -> list[dict] | None:
+    """Normalize DiscordChatExporter and Discord data-package message JSON.
+
+    Discord exports use ``Contents``/``Author`` while other tools use lowercase
+    fields. We keep author, timestamp, message id, attachments, and channel
+    metadata in each record, while ``text`` is a stable speaker-prefixed turn.
+    """
+    messages = _discord_messages(value)
+    if messages is None:
+        return None
+    records: list[dict] = []
+    for index, message in enumerate(messages):
+        content = message.get("Contents", message.get("contents", message.get("content", "")))
+        if not isinstance(content, str) or not content.strip():
+            continue
+        author = _discord_author(message.get("Author", message.get("author")))
+        timestamp = message.get("Timestamp", message.get("timestamp", ""))
+        message_id = message.get("Id", message.get("id", index))
+        record = _record(source_id, index, "discord", f"{author}: {content.strip()}")
+        record.update({
+            "author": author,
+            "content": content.strip(),
+            "timestamp": str(timestamp) if timestamp is not None else "",
+            "message_id": str(message_id),
+            "conversation_role": "assistant" if author.lower() in {"oddsoul", "eli", "cptn_oddsoul", "cptn eli"} else "user",
+        })
+        if isinstance(message.get("Attachments", message.get("attachments")), list):
+            record["attachments"] = message.get("Attachments", message.get("attachments"))
+        records.append(record)
+    return records or None
+
+
 def _extract_json_records(data: bytes, source_id: str) -> list[dict]:
     try:
         value = json.loads(_decode_text(data))
     except json.JSONDecodeError as exc:
         raise IngestionError(f"invalid JSON: {exc}") from exc
+    discord = _extract_discord_records(value, source_id)
+    if discord is not None:
+        return discord
     if isinstance(value, list):
         return [_record_from_value(item, source_id, index, "json") for index, item in enumerate(value)]
     return [_record_from_value(value, source_id, 0, "json")]

@@ -378,7 +378,7 @@ class DesktopApp:
     def _choose_local_file(self) -> None:
         path = filedialog.askopenfilename(
             title="Choose a local dataset source",
-            filetypes=[("Dataset sources", "*.txt *.md *.jsonl *.pdf"), ("All files", "*.*")],
+            filetypes=[("Dataset sources", "*.txt *.md *.json *.jsonl *.pdf"), ("All files", "*.*")],
         )
         if path:
             self.controller.set_dataset_file(path)

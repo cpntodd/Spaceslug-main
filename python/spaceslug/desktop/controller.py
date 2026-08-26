@@ -76,7 +76,7 @@ TAB_NAMES = ("Home", "Datasets", "Build & Train", "Interact", "Local API")
 
 DEFAULT_SEARXNG_BASE_URL = "http://127.0.0.1:8888"
 DEFAULT_API_ADDRESS = "127.0.0.1:8123"
-LOCAL_SOURCE_EXTENSIONS = (".txt", ".md", ".jsonl", ".pdf")
+LOCAL_SOURCE_EXTENSIONS = (".txt", ".md", ".json", ".jsonl", ".pdf")
 
 # Explicit capability boundaries shown on each tab. Phase 1 workflows are wired
 # and these texts are assembled from the live module capability metadata rather

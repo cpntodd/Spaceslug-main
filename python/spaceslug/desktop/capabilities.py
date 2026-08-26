@@ -129,7 +129,7 @@ def api_capability_text() -> str:
 def datasets_capability_text() -> str:
     return (
         "Datasets uses the committed headless workspace service "
-        "(spaceslug.workspace.WorkspaceService): local .txt/.md/.jsonl import, "
+        "(spaceslug.workspace.WorkspaceService): local .txt/.md/.json/.jsonl import (including Discord chat exports), "
         "local .pdf import through the locally installed pdftotext tool, HTTP(S) URL "
         "import only after explicit approval, SearXNG-compatible search (results are "
         "never auto-fetched), optional license metadata, content-addressed "
