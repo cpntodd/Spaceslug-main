@@ -39,9 +39,9 @@ def readiness(probe: dict[str, Any] | None, rank: int) -> dict[str, Any]:
     return {"ready": not reasons, "reason": "; ".join(reasons) if reasons else "RADV fixed-Tiny rank-4 training ready", "missing": missing}
 
 
-def _windows(bundle: DatasetBundle, tokenizer: ByteTokenizer) -> list[tuple[list[int], list[int], list[int]]]:
+def _windows(bundle: DatasetBundle, tokenizer: ByteTokenizer, split: str = "train") -> list[tuple[list[int], list[int], list[int]]]:
     result = []
-    for record in bundle.records("train"):
+    for record in bundle.records(split):
         prompt = str(record.get("prompt", ""))
         target = str(record.get("target", record.get("text", "")))
         prompt_ids = tokenizer.encode(prompt)
@@ -60,7 +60,7 @@ def _windows(bundle: DatasetBundle, tokenizer: ByteTokenizer) -> list[tuple[list
                 mask = [1 if (start + index + 1) >= response_start else 0 for index in range(len(source) - 1)]
                 result.append((source[:-1], source[1:], mask))
     if not result:
-        raise ValueError("dataset has no token windows for native training")
+        return []
     return result
 
 
@@ -76,7 +76,9 @@ def run_native_training(
     """Run host-staged dataset windows through the native persistent Vulkan graph."""
     bundle = verify_bundle(bundle_path)
     tokenizer = default_tokenizer()
-    windows = _windows(bundle, tokenizer)
+    windows = _windows(bundle, tokenizer, "train")
+    if not windows:
+        raise ValueError("dataset has no token windows for native training")
     split_counts = {split: len(bundle.records(split)) for split in ("train", "validation", "test")}
     backend = backend_factory(runtime_root, runtime_revision)
     caps = backend.capabilities()
@@ -93,6 +95,8 @@ def run_native_training(
     device_batch_status = "not-attempted"
     validation_metrics = {"records": split_counts["validation"], "loss": None, "status": "not-run"}
     test_metrics = {"records": split_counts["test"], "loss": None, "status": "not-run"}
+    validation_windows = _windows(bundle, tokenizer, "validation")
+    test_windows = _windows(bundle, tokenizer, "test")
     try:
         for step in range(1, steps + 1):
             if should_stop and should_stop():
@@ -108,6 +112,13 @@ def run_native_training(
             losses.append(loss)
             if on_step:
                 on_step(step, loss)
+        # Evaluation dispatch is intentionally capability-gated. The current
+        # persistent trainer has no read-only held-out graph, so never mutate
+        # weights or label train loss as validation/test loss.
+        if validation_windows:
+            validation_metrics["status"] = "unsupported-readonly-graph"
+        if test_windows:
+            test_metrics["status"] = "unsupported-readonly-graph"
         checkpoint = Path(checkpoint); checkpoint.parent.mkdir(parents=True, exist_ok=True)
         trainer.checkpoint(checkpoint)
     finally:
