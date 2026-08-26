@@ -42,15 +42,23 @@ def readiness(probe: dict[str, Any] | None, rank: int) -> dict[str, Any]:
 def _windows(bundle: DatasetBundle, tokenizer: ByteTokenizer) -> list[tuple[list[int], list[int], list[int]]]:
     result = []
     for record in bundle.records("train"):
-        text = str(record.get("prompt", "")) + str(record.get("target", record.get("text", "")))
-        ids = tokenizer.encode(text)
+        prompt = str(record.get("prompt", ""))
+        target = str(record.get("target", record.get("text", "")))
+        prompt_ids = tokenizer.encode(prompt)
+        target_ids = tokenizer.encode(target)
+        ids = prompt_ids + target_ids
+        # Train only on response tokens when a prompt/target record is present;
+        # prompt context remains visible to the forward pass but contributes no
+        # loss. Plain text records retain all-token masking.
+        response_start = max(0, len(prompt_ids) - 1) if target else 0
         # Keep each RX580 submission below the compute-ring watchdog budget.
         # The ABI permits 128 positions, but a full backward window can trigger
         # gfx803 soft recovery; bounded 8-token chunks are the verified desktop gate.
         for start in range(0, max(0, len(ids) - 1), 8):
             source = ids[start:start + 9]
             if len(source) >= 2:
-                result.append((source[:-1], source[1:], [1] * (len(source) - 1)))
+                mask = [1 if (start + index + 1) >= response_start else 0 for index in range(len(source) - 1)]
+                result.append((source[:-1], source[1:], mask))
     if not result:
         raise ValueError("dataset has no token windows for native training")
     return result
