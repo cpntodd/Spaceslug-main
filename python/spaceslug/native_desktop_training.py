@@ -77,6 +77,7 @@ def run_native_training(
     bundle = verify_bundle(bundle_path)
     tokenizer = default_tokenizer()
     windows = _windows(bundle, tokenizer)
+    split_counts = {split: len(bundle.records(split)) for split in ("train", "validation", "test")}
     backend = backend_factory(runtime_root, runtime_revision)
     caps = backend.capabilities()
     gate = readiness({"device": caps.device, "software_vulkan": caps.software_vulkan,
@@ -114,7 +115,7 @@ def run_native_training(
         "format": "spaceslug-native-tiny-adapter", "profile": "tiny_h64_v259_vp320_t128_rank4",
         "checkpoint": str(checkpoint), "backend": "vulkan-radv", "gpu_execution": True,
         "dataset_device_resident": device_batch_status == "ok", "device_batch_attempted": device_batch_attempted,
-        "device_batch_status": device_batch_status,
+        "device_batch_status": device_batch_status, "split_record_counts": split_counts,
     }, sort_keys=True, indent=2) + "\n")
     revision = "sha256:" + hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     # Keep the adapter checkpoint discoverable by the desktop responder.
@@ -126,7 +127,8 @@ def run_native_training(
     experiment_file = experiment / "experiment.json"
     metrics = {"initial_train_loss": losses[0] if losses else None, "final_train_loss": losses[-1] if losses else None,
                "stopped_reason": stopped, "steps": len(losses), "gpu_execution": True,
-               "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status}
+               "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status,
+               "split_record_counts": split_counts}
     experiment_file.write_text(json.dumps({"created_at": datetime.now(UTC).isoformat(), "backend": "vulkan-radv",
                                             "metrics": metrics}, sort_keys=True, indent=2) + "\n")
     return {"artifact_revision": revision, "experiment": str(experiment_file), "metrics": metrics,
