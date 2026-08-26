@@ -103,10 +103,20 @@ def run_native_training(
                 stopped = "cancelled"
                 break
             tokens, targets, mask = windows[(step - 1) % len(windows)]
-            # Full device-batch training is attempted only through its explicit
-            # ABI. Until the native graph implements it, retain the verified
-            # bounded token path rather than silently mislabeling LM-head SGD.
-            outcome = trainer.train_tokens(tokens, targets, mask)
+            # Probe the complete device-batch ABI once using a bounded batch.
+            # Unsupported is an explicit capability result; only then use the
+            # verified GPU graph token path, never the CPU reference trainer.
+            if not device_batch_attempted and hasattr(trainer, "train_device_batch"):
+                device_batch_attempted = True
+                device_batch = trainer.train_device_batch(tokens, targets, mask, [0], len(tokens))
+                device_batch_status = str(device_batch.get("status", "unknown"))
+                if device_batch_status == "ok":
+                    outcome = {"loss": [float(device_batch.get("loss", 0.0))], "gpu_execution": True}
+                else:
+                    outcome = trainer.train_tokens(tokens, targets, mask)
+                    device_batch_status = "unsupported-fallback-gpu-graph"
+            else:
+                outcome = trainer.train_tokens(tokens, targets, mask)
             values = [float(value) for value in outcome["loss"]]
             loss = sum(values) / max(1, len(values))
             losses.append(loss)

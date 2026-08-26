@@ -898,6 +898,9 @@ class BackendSession:
         if learning_rate <= 0.0 or normalizer <= 0.0:
             raise ValueError("learning_rate and normalizer must be positive")
         code = fn(graph, batch, learning_rate, normalizer)
+        if code == -4:
+            return {"status": "unsupported", "gpu_execution": False, "device_resident": False,
+                    "reason": "native full dataset graph is not integrated"}
         if code != 0:
             raise BackendError(f"full device dataset graph returned {code}")
         return {"status": "ok", "gpu_execution": True, "device_resident": True}
