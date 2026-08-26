@@ -76,9 +76,10 @@ What each tab does:
   refreshable native-runtime readiness diagnostic. It reports the inspected
   runtime root/library, device and RADV-versus-lavapipe classification, expected
   Tiny ABI operations, and an actionable reason for a fallback.
-- **Datasets** — the wired ingestion workflow: optional license metadata, local
-  source import (`.txt`/`.md`/`.jsonl`/`.pdf`), approved-URL import, SearXNG search and
-  result selection, and `.dts` bundle creation.
+- **Datasets** — the wired ingestion workflow: individual-file or recursive-folder
+  import (`.txt`/`.md`/`.jsonl`/`.pdf`), approved-URL import, SearXNG search and
+  result selection, an imported-source table, and `.dts` bundle creation. The
+  table shows filename/source, extension/type, import date, and file size.
 - **Build & Train** — training controls (steps, learning rate, batch size),
   start/stop, and the live **loss worm** canvas with a status readout (run id,
   checkpoint/artifact/experiment paths, loss trajectory, placement).
@@ -119,10 +120,12 @@ Details:
   produces no output file, or yields no text, import raises
   `PDFExtractionError`. PDFs obey the same limits as other local sources: over
   16 MB raises `ContentTooLargeError`, license metadata may be left blank, and invalid UTF-8 in the extracted text fails closed.
-- **Desktop wiring.** The desktop's "Choose…" picker still lists
-  `.txt`/`.md`/`.jsonl` only, but the "Import local" action accepts a `.pdf`
-  path, so a PDF is imported through the same `pdftotext`-based service when the
-  tool is installed.
+- **Desktop wiring.** **Choose file…** imports one supported document.
+  **Import folder…** recursively scans the selected directory and deterministically
+  imports accepted `.txt`, `.md`, `.jsonl`, and `.pdf` files; unsupported or
+  oversized files are reported as skipped, and one failed document does not
+  discard successful imports. Local and approved online imports appear together
+  in the source table at the bottom of the Datasets tab.
 - **Ingestion stays local and inspectable.** The workspace service reads local
   files with a per-file size limit, stages them content-addressed (SHA-256),
   accepts optional license metadata, and builds a deterministic,

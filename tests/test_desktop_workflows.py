@@ -113,6 +113,24 @@ class DesktopDatasetWorkflowTest(unittest.TestCase):
             imported = controller.import_local_source(src)
             self.assertEqual(imported.license, "")
 
+    def test_folder_import_and_source_table_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested = root / "nested"
+            nested.mkdir()
+            (root / "a.txt").write_text("a", encoding="utf-8")
+            (nested / "b.md").write_text("b", encoding="utf-8")
+            (root / "skip.py").write_text("pass", encoding="utf-8")
+            controller = DesktopController(workspace_root=root / "ws")
+            result = controller.import_local_folder(root)
+            self.assertEqual([item.source for item in result["imported"]], [str(root / "a.txt"), str(nested / "b.md")])
+            self.assertIn(str(root / "skip.py"), result["skipped"])
+            rows = controller.imported_source_rows()
+            self.assertEqual([row["filename"] for row in rows], ["a.txt", "b.md"])
+            self.assertEqual([row["extension"] for row in rows], [".txt", ".md"])
+            self.assertTrue(all(row["date_imported"] for row in rows))
+            self.assertEqual([row["file_size"] for row in rows], [1, 1])
+
     def test_create_dataset_requires_imports(self):
         with tempfile.TemporaryDirectory() as directory:
             controller = DesktopController(workspace_root=Path(directory) / "ws")

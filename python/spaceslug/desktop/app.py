@@ -208,8 +208,9 @@ class DesktopApp:
         ttk.Label(row, text="File path:", width=14, anchor="w").pack(side="left")
         self._variable("dataset_file", self.controller.dataset_file, self.controller.set_dataset_file)
         ttk.Entry(row, textvariable=self._vars["dataset_file"]).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Choose…", command=self._choose_local_file).pack(side="left", padx=(6, 0))
-        ttk.Button(row, text="Import local", command=self._import_local).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="Choose file…", command=self._choose_local_file).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="Import file", command=self._import_local).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="Import folder…", command=self._import_folder).pack(side="left", padx=(6, 0))
 
         url_box = ttk.LabelFrame(frame, text="Approved URL", padding=6)
         url_box.pack(fill="x", pady=6)
@@ -249,6 +250,23 @@ class DesktopApp:
         self._variable("dataset_id", self.controller.dataset_id, self.controller.set_dataset_id)
         ttk.Entry(row, textvariable=self._vars["dataset_id"]).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Create .dts", command=self._create_dataset).pack(side="left", padx=(6, 0))
+
+        sources_box = ttk.LabelFrame(frame, text="Imported documents and information sources", padding=6)
+        sources_box.pack(fill="both", expand=True, pady=6)
+        columns = ("filename", "extension", "date_imported", "file_size")
+        self._source_table = ttk.Treeview(sources_box, columns=columns, show="headings", height=7)
+        for key, heading, width in (
+            ("filename", "Filename / source", 310),
+            ("extension", "Extension / type", 120),
+            ("date_imported", "Date imported", 210),
+            ("file_size", "File size", 100),
+        ):
+            self._source_table.heading(key, text=heading)
+            self._source_table.column(key, width=width, anchor="w")
+        self._source_table.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(sources_box, orient="vertical", command=self._source_table.yview)
+        scrollbar.pack(side="right", fill="y")
+        self._source_table.configure(yscrollcommand=scrollbar.set)
 
         self._datasets_status = self._status_label(frame)
         return frame
@@ -346,6 +364,22 @@ class DesktopApp:
         if path:
             self.controller.set_dataset_file(path)
             self._vars["dataset_file"].set(path)
+
+    def _import_folder(self) -> None:
+        folder = filedialog.askdirectory(title="Choose a folder of dataset sources")
+        if not folder:
+            return
+        try:
+            result = self.controller.import_local_folder(folder, recursive=True)
+        except Exception as exc:
+            self._set_label(self._datasets_status, f"folder import failed: {type(exc).__name__}: {exc}")
+            return
+        self._set_label(
+            self._datasets_status,
+            f"folder import: {len(result['imported'])} imported, {len(result['skipped'])} skipped, "
+            f"{len(result['errors'])} failed",
+        )
+        self.refresh()
 
     def _import_local(self) -> None:
         try:
@@ -554,6 +588,13 @@ class DesktopApp:
         self._placement_actual.configure(text=f"actual: {training_placement['actual']} · hardware: {training_placement['hardware']}")
         self._placement_device.configure(text=f"device: {placement['device']}")
         self._placement_reason.configure(text=f"reason: {training_placement['reason']}")
+        for item in self._source_table.get_children():
+            self._source_table.delete(item)
+        for row in self.controller.imported_source_rows():
+            size = f"{row['file_size']:,} B"
+            self._source_table.insert(
+                "", "end", values=(row["filename"], row["extension"], row["date_imported"], size)
+            )
         responder = snapshot["responder"]
         self._responder_label.configure(text=f"responder: {responder['backend']} / {responder['model']}")
         profile_id = snapshot["profile"]["model_id"]

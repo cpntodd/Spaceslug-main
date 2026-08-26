@@ -18,6 +18,7 @@ from __future__ import annotations
 import queue
 import subprocess
 import threading
+import urllib.parse
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -406,6 +407,53 @@ class DesktopController:
         imported = self._workspace_service().import_local(path, license=self._resolve_license(license))
         self.dataset_file = str(path)
         return self._record_import(imported)
+
+    def import_local_folder(
+        self, root: str | Path, *, recursive: bool = True, license: str | None = None
+    ) -> dict[str, Any]:
+        """Scan *root* and import every supported file, retaining partial success."""
+        selection = self.choose_local_sources(root, recursive=recursive)
+        imported: list[Any] = []
+        errors: list[dict[str, str]] = []
+        for path in selection.files:
+            try:
+                imported.append(self.import_local_source(path, license=license))
+            except Exception as exc:
+                errors.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
+        return {
+            "root": str(selection.root),
+            "imported": imported,
+            "skipped": [str(path) for path in selection.skipped],
+            "errors": errors,
+        }
+
+    def imported_source_rows(self) -> list[dict[str, Any]]:
+        """Return display metadata for local and approved online imports."""
+        rows: list[dict[str, Any]] = []
+        for imported in self.imports:
+            source = str(imported.source)
+            if imported.retrieval == "local":
+                path = Path(source)
+                name = path.name
+                extension = path.suffix.lower() or imported.kind
+                try:
+                    timestamp = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
+                except OSError:
+                    timestamp = imported.fetched_at or ""
+            else:
+                parsed_path = Path(urllib.parse.urlsplit(source).path)
+                name = parsed_path.name or source
+                extension = parsed_path.suffix.lower() or imported.kind
+                timestamp = imported.fetched_at or ""
+            rows.append({
+                "filename": name,
+                "extension": extension,
+                "date_imported": timestamp,
+                "file_size": imported.bytes,
+                "source": source,
+                "retrieval": imported.retrieval,
+            })
+        return rows
 
     # -- approved URL import -------------------------------------------------
     def import_approved_url(self, url: str, *, license: str | None = None) -> Any:
