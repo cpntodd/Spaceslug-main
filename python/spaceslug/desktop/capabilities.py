@@ -99,8 +99,9 @@ def datasets_capability_text() -> str:
     return (
         "Datasets uses the committed headless workspace service "
         "(spaceslug.workspace.WorkspaceService): local .txt/.md/.jsonl import, "
-        "HTTP(S) URL import only after explicit approval, SearXNG-compatible search "
-        "(results are never auto-fetched), license confirmation before ingest, "
-        "content-addressed SHA-256 staging, and deterministic .dts bundle creation. "
-        "PDF files are selectable but PDF-to-text extraction is not implemented yet."
+        "local .pdf import through the locally installed pdftotext tool, HTTP(S) URL "
+        "import only after explicit approval, SearXNG-compatible search (results are "
+        "never auto-fetched), license confirmation before ingest, content-addressed "
+        "SHA-256 staging, and deterministic .dts bundle creation. PDF import fails "
+        "explicitly if pdftotext is unavailable, errors, or yields no text."
     )

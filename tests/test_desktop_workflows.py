@@ -124,15 +124,15 @@ class DesktopDatasetWorkflowTest(unittest.TestCase):
         with self.assertRaises(IngestionError):
             controller.build_training_bundle()
 
-    def test_choose_local_sources_excludes_pdf(self):
+    def test_choose_local_sources_includes_pdf(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "ok.md").write_text("hello", encoding="utf-8")
             (root / "paper.pdf").write_bytes(b"%PDF-1.4 placeholder")
             (root / "skip.py").write_text("pass", encoding="utf-8")
             selection = DesktopController().choose_local_sources(root)
-            self.assertEqual([path.name for path in selection.files], ["ok.md"])
-            self.assertEqual(sorted(path.name for path in selection.skipped), ["paper.pdf", "skip.py"])
+            self.assertEqual([path.name for path in selection.files], ["ok.md", "paper.pdf"])
+            self.assertEqual([path.name for path in selection.skipped], ["skip.py"])
 
 
 class DesktopNetworkWorkflowTest(unittest.TestCase):
