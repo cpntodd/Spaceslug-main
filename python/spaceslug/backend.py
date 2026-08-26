@@ -903,7 +903,9 @@ class BackendSession:
                     "reason": "native full dataset graph is not integrated"}
         if code != 0:
             raise BackendError(f"full device dataset graph returned {code}")
-        return {"status": "ok", "gpu_execution": True, "device_resident": True}
+        return {"status": "ok", "gpu_execution": True, "device_resident": True,
+                "full_dataset_training": True, "all_parameter_training": True,
+                "optimizer": "native-graph", "metrics": {}}
 
     def close_tiny_dataset_batch(self, batch: ctypes.c_void_p) -> None:
         fn = getattr(self._native(), "spaceslug_tiny_forward_destroy_dataset_batch", None)
