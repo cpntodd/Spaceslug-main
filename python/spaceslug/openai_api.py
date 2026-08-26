@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Self
 from urllib.parse import urlsplit
 
+from .backend import BackendError, BackendSession
 from .projected_attention_reference import ProjectedTinyAttentionModel
 from .tokenizer import ByteTokenizer, default_tokenizer
 
@@ -39,6 +40,7 @@ __all__ = [
     "OpenAICompatibleServer",
     "ResponderResult",
     "TinyCpuEchoResponder",
+    "TinyGpuResponder",
 ]
 
 
@@ -102,6 +104,33 @@ def last_user_text(messages: list[dict]) -> str:
             if text:
                 return text
     return ""
+
+
+class TinyGpuResponder(ModelResponder):
+    """Deterministic Tiny responder using the configured Vulkan forward path."""
+
+    backend_id = "vulkan-radv-tiny"
+    model_id = "spaceslug-tiny-attention-v1"
+
+    def __init__(self, backend: BackendSession, model=None, tokenizer=None, *, max_echo_chars: int = 1000):
+        self.backend = backend
+        self.model = model if model is not None else ProjectedTinyAttentionModel(259, 64)
+        self.tokenizer = tokenizer if tokenizer is not None else default_tokenizer()
+        self.max_echo_chars = max_echo_chars
+
+    def respond(self, messages: list[dict]) -> ResponderResult:
+        prompt = last_user_text(messages)
+        tokens = self.tokenizer.encode(prompt)
+        result = self.backend.execute_projected_attention_gpu(tokens, self.model)
+        if result.status != "ok" or not result.metrics.get("gpu_execution", False):
+            raise BackendError(result.metrics.get("reason", "native GPU inference unavailable"))
+        logits = result.output["logits"]
+        next_token = max(range(len(logits)), key=logits.__getitem__)
+        echo = prompt if len(prompt) <= self.max_echo_chars else prompt[:self.max_echo_chars] + "…"
+        content = (f"Spaceslug-Tiny GPU responder (backend={self.backend_id}, model={self.model_id}).\\n"
+                   "This is a deterministic, non-generative GPU reference: it reports one argmax next-token prediction.\\n\\n"
+                   f"next_token={next_token}\\necho={echo}\\n")
+        return ResponderResult(content=content, prompt_tokens=len(tokens), completion_tokens=len(self.tokenizer.encode(content, add_bos=False, add_eos=False)))
 
 
 class TinyCpuEchoResponder(ModelResponder):

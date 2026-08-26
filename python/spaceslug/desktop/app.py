@@ -29,6 +29,7 @@ class DesktopApp:
 
     def __init__(self, controller: DesktopController | None = None, root: tk.Tk | None = None) -> None:
         self.controller = controller or DesktopController(code_revision=detect_code_revision())
+        self.controller.initialize_inference()
         self.root = root or tk.Tk()
         self.root.title("Spaceslug-main — desktop (Phase 1)")
         self.root.geometry("820x720")
@@ -108,6 +109,7 @@ class DesktopApp:
             self.controller.set_runtime_target(
                 self._vars["runtime_root"].get(), self._vars["runtime_revision"].get()
             )
+            self.controller.initialize_inference()
             report = self.controller.refresh_gpu_readiness()
         except Exception as exc:
             text = f"GPU readiness check failed: {type(exc).__name__}: {exc}"
@@ -342,7 +344,9 @@ class DesktopApp:
         ttk.Label(frame, text="Interact", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
 
         self._responder_label = ttk.Label(frame, text="", anchor="w", foreground="#555")
-        self._responder_label.pack(anchor="w", pady=(2, 4))
+        self._responder_label.pack(anchor="w", pady=(2, 0))
+        self._inference_status_label = ttk.Label(frame, text="", anchor="w", foreground="#555")
+        self._inference_status_label.pack(anchor="w", pady=(0, 4))
 
         row = ttk.Frame(frame)
         row.pack(fill="x", pady=(4, 2))
@@ -668,6 +672,9 @@ class DesktopApp:
             self._dataset_bundle_var.set(self.controller.created_bundle)
         responder = snapshot["responder"]
         self._responder_label.configure(text=f"responder: {responder['backend']} / {responder['model']}")
+        inference = snapshot["inference"]
+        state = "READY" if inference["ready"] else "CPU FALLBACK"
+        self._inference_status_label.configure(text=f"embedded inference: {state} — {inference['backend']} — {inference['reason']}")
         profile_id = snapshot["profile"]["model_id"]
         api = snapshot["api"]
         self._status.set(

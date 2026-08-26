@@ -30,11 +30,13 @@ from ..dataset import verify_bundle
 from ..documentation_crawler import DocumentationCrawler, CrawlSession, same_origin
 from ..filesystem_picker import FileSelection, pick_files
 from ..native_desktop_training import readiness as native_gpu_readiness, run_native_training
+from ..backend import BackendSession
 from ..openai_api import (
     LOOPBACK_HOSTS,
     ModelResponder,
     OpenAICompatibleServer,
     TinyCpuEchoResponder,
+    TinyGpuResponder,
 )
 from ..projected_attention_training import (
     ProjectedAttentionConfig,
@@ -187,6 +189,8 @@ class DesktopController:
 
         # Responder shared by chat and the local API server.
         self.responder = responder
+        self._inference_explicit = responder is not None
+        self.inference_status = {"backend": "uninitialized", "ready": False, "reason": "inference engine has not been initialized"}
         self.code_revision = code_revision if code_revision is not None else "unrecorded"
 
         # Dataset workflow state.
@@ -227,7 +231,8 @@ class DesktopController:
         self._loss_queue: queue.Queue[tuple[int, float]] = queue.Queue()
         self._cancel_event = threading.Event()
 
-        # Chat and API workflow state.
+        # Chat and API workflow state. The native desktop app initializes the
+        # embedded engine at launch; headless controllers remain side-effect free.
         self.chat_prompt = ""
         self.chat_history: list[tuple[str, str]] = []
         self.api_address = DEFAULT_API_ADDRESS
@@ -807,9 +812,25 @@ class DesktopController:
         return status
 
     # -- chat ----------------------------------------------------------------
+    def initialize_inference(self) -> dict[str, Any]:
+        if self.responder is not None and self._inference_explicit:
+            self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "injected responder"}
+            return self.inference_status
+        self.responder = None
+        try:
+            backend = BackendSession(self.runtime_root, self.runtime_revision)
+            backend.capabilities()
+            self.responder = TinyGpuResponder(backend)
+            self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "native Vulkan inference initialized"}
+        except Exception as exc:
+            self.responder = TinyCpuEchoResponder()
+            self.inference_status = {"backend": self.responder.backend_id, "ready": False, "reason": f"GPU inference unavailable: {type(exc).__name__}: {exc}"}
+        return self.inference_status
+
     def _responder(self) -> ModelResponder:
         if self.responder is None:
             self.responder = TinyCpuEchoResponder()
+            self.inference_status = {"backend": self.responder.backend_id, "ready": False, "reason": "headless controller CPU reference; desktop launch initializes GPU"}
         return self.responder
 
     def set_chat_prompt(self, value: str) -> None:
@@ -914,6 +935,7 @@ class DesktopController:
             "training": self.training_status(),
             "chat_prompt": self.chat_prompt,
             "chat_history": list(self.chat_history),
+            "inference": dict(self.inference_status),
             "api_address": self.api_address,
             "api": self.api_status(),
             "responder": self.responder_identity(),
