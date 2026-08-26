@@ -88,12 +88,17 @@ def run_native_training(
     trainer = trainer_factory(backend, model, adapter, learning_rate, optimizer="sgd")
     losses: list[float] = []
     stopped = "steps"
+    device_batch_attempted = False
+    device_batch_status = "not-attempted"
     try:
         for step in range(1, steps + 1):
             if should_stop and should_stop():
                 stopped = "cancelled"
                 break
             tokens, targets, mask = windows[(step - 1) % len(windows)]
+            # Full device-batch training is attempted only through its explicit
+            # ABI. Until the native graph implements it, retain the verified
+            # bounded token path rather than silently mislabeling LM-head SGD.
             outcome = trainer.train_tokens(tokens, targets, mask)
             values = [float(value) for value in outcome["loss"]]
             loss = sum(values) / max(1, len(values))
@@ -108,6 +113,8 @@ def run_native_training(
     (artifact / "native-training.json").write_text(json.dumps({
         "format": "spaceslug-native-tiny-adapter", "profile": "tiny_h64_v259_vp320_t128_rank4",
         "checkpoint": str(checkpoint), "backend": "vulkan-radv", "gpu_execution": True,
+        "dataset_device_resident": device_batch_status == "ok", "device_batch_attempted": device_batch_attempted,
+        "device_batch_status": device_batch_status,
     }, sort_keys=True, indent=2) + "\n")
     revision = "sha256:" + hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     # Keep the adapter checkpoint discoverable by the desktop responder.
@@ -118,7 +125,8 @@ def run_native_training(
     experiment = Path(experiment); experiment.mkdir(parents=True, exist_ok=True)
     experiment_file = experiment / "experiment.json"
     metrics = {"initial_train_loss": losses[0] if losses else None, "final_train_loss": losses[-1] if losses else None,
-               "stopped_reason": stopped, "steps": len(losses), "gpu_execution": True}
+               "stopped_reason": stopped, "steps": len(losses), "gpu_execution": True,
+               "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status}
     experiment_file.write_text(json.dumps({"created_at": datetime.now(UTC).isoformat(), "backend": "vulkan-radv",
                                             "metrics": metrics}, sort_keys=True, indent=2) + "\n")
     return {"artifact_revision": revision, "experiment": str(experiment_file), "metrics": metrics,
