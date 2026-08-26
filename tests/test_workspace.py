@@ -192,14 +192,16 @@ class WorkspaceServiceTest(unittest.TestCase):
             with self.assertRaises(UnsupportedKindError):
                 WorkspaceService(root / "ws").import_local(src, license="MIT")
 
-    def test_license_confirmation_required(self):
+    def test_license_metadata_is_optional(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             src = root / "notes.txt"
             src.write_text("data\n", encoding="utf-8")
             ws = WorkspaceService(root / "ws")
-            with self.assertRaises(LicenseRequiredError):
-                ws.import_local(src, license="   ")
+            imported = ws.import_local(src)
+            self.assertEqual(imported.license, "")
+            bundle = ws.create_dataset("without-license", imported)
+            self.assertEqual(verify_bundle(bundle.root).manifest["provenance"]["licenses"], [])
 
     def test_local_file_size_limit(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -201,13 +201,6 @@ class DesktopApp:
         frame = ttk.Frame(notebook, padding=10)
         ttk.Label(frame, text="Datasets", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
 
-        license_row = ttk.Frame(frame)
-        license_row.pack(fill="x", pady=(8, 2))
-        ttk.Label(license_row, text="License:", width=14, anchor="w").pack(side="left")
-        self._variable("dataset_license", self.controller.dataset_license, self.controller.set_dataset_license)
-        ttk.Entry(license_row, textvariable=self._vars["dataset_license"]).pack(side="left", fill="x", expand=True)
-        ttk.Label(license_row, text="(required before any import)").pack(side="left", padx=(6, 0))
-
         local_box = ttk.LabelFrame(frame, text="Local source", padding=6)
         local_box.pack(fill="x", pady=6)
         row = ttk.Frame(local_box)

@@ -132,7 +132,7 @@ def datasets_capability_text() -> str:
         "(spaceslug.workspace.WorkspaceService): local .txt/.md/.jsonl import, "
         "local .pdf import through the locally installed pdftotext tool, HTTP(S) URL "
         "import only after explicit approval, SearXNG-compatible search (results are "
-        "never auto-fetched), license confirmation before ingest, content-addressed "
+        "never auto-fetched), optional license metadata, content-addressed "
         "SHA-256 staging, and deterministic .dts bundle creation. PDF import fails "
         "explicitly if pdftotext is unavailable, errors, or yields no text."
     )

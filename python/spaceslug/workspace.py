@@ -488,7 +488,7 @@ class WorkspaceService:
         self.bundles_dir.mkdir(parents=True, exist_ok=True)
         self._pdftotext_runner = pdftotext_runner or run_pdftotext
 
-    def import_local(self, path: str | Path, *, license: str, max_bytes: int = DEFAULT_MAX_BYTES) -> ImportedSource:
+    def import_local(self, path: str | Path, *, license: str = "", max_bytes: int = DEFAULT_MAX_BYTES) -> ImportedSource:
         data, meta = read_local_file(path, max_bytes=max_bytes)
         return self.import_bytes(
             data,
@@ -503,7 +503,7 @@ class WorkspaceService:
         self,
         url: str,
         *,
-        license: str,
+        license: str = "",
         approved: bool = False,
         max_bytes: int = DEFAULT_MAX_BYTES,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
@@ -527,14 +527,16 @@ class WorkspaceService:
         source: str,
         kind: str,
         content_type: str | None,
-        license: str,
         retrieval: str,
+        license: str = "",
         fetched_at: str | None = None,
         status: int | None = None,
     ) -> ImportedSource:
         """Stage raw *data* content-addressed, then extract and record provenance."""
-        if not isinstance(license, str) or not license.strip():
-            raise LicenseRequiredError(f"license confirmation required before ingesting {source!r}")
+        if license is None:
+            license = ""
+        if not isinstance(license, str):
+            raise IngestionError("license metadata must be text when supplied")
         license = license.strip()
         sha = sha256_bytes(data)
         record_dir = self.ingest_dir / sha[:2] / sha
@@ -585,7 +587,8 @@ class WorkspaceService:
         licenses: set[str] = set()
         for imported in import_list:
             sources.add(imported.source)
-            licenses.add(imported.license)
+            if imported.license:
+                licenses.add(imported.license)
             records.extend(dict(record) for record in imported.records)
         splits = {"train": [], "validation": [], "test": []}
         splits[split] = records
@@ -626,7 +629,7 @@ class WorkspaceService:
                     bytes=provenance["bytes"],
                     kind=provenance["kind"],
                     content_type=provenance.get("content_type"),
-                    license=provenance["license"],
+                    license=provenance.get("license", ""),
                     retrieval=provenance["retrieval"],
                     fetched_at=provenance.get("fetched_at"),
                     status=provenance.get("status"),

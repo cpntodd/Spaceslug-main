@@ -76,7 +76,7 @@ What each tab does:
   refreshable native-runtime readiness diagnostic. It reports the inspected
   runtime root/library, device and RADV-versus-lavapipe classification, expected
   Tiny ABI operations, and an actionable reason for a fallback.
-- **Datasets** — the wired ingestion workflow: a required license field, local
+- **Datasets** — the wired ingestion workflow: optional license metadata, local
   source import (`.txt`/`.md`/`.jsonl`/`.pdf`), approved-URL import, SearXNG search and
   result selection, and `.dts` bundle creation.
 - **Build & Train** — training controls (steps, learning rate, batch size),
@@ -118,15 +118,14 @@ Details:
   `PDFToolMissingError` (install `poppler-utils`). If the tool exits non-zero,
   produces no output file, or yields no text, import raises
   `PDFExtractionError`. PDFs obey the same limits as other local sources: over
-  16 MB raises `ContentTooLargeError`, a missing license confirmation raises
-  `LicenseRequiredError`, and invalid UTF-8 in the extracted text fails closed.
+  16 MB raises `ContentTooLargeError`, license metadata may be left blank, and invalid UTF-8 in the extracted text fails closed.
 - **Desktop wiring.** The desktop's "Choose…" picker still lists
   `.txt`/`.md`/`.jsonl` only, but the "Import local" action accepts a `.pdf`
   path, so a PDF is imported through the same `pdftotext`-based service when the
   tool is installed.
 - **Ingestion stays local and inspectable.** The workspace service reads local
   files with a per-file size limit, stages them content-addressed (SHA-256),
-  requires a license confirmation before ingest, and builds a deterministic,
+  accepts optional license metadata, and builds a deterministic,
   versioned dataset bundle (`.dts`) with lineage and checksums. See
   [`DATASETS.md`](DATASETS.md) and [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md).
 - **Reproducibility over filenames.** A dataset is identified by content hash and
@@ -139,7 +138,7 @@ The desktop's **Datasets** tab drives a **fetch-only-with-approval** policy for
 web content, with SearXNG as the search gateway:
 
 - **License first.** A source cannot be imported — local or remote — without a
-  license confirmation entered in the Datasets tab.
+  optional license metadata when supplied by a caller.
 - **Explicit approval before any fetch.** The "Import URL" action treats the URL
   as approved; an HTTP(S) fetch refuses to run unless it was explicitly approved.
   An unapproved URL is a hard error, not a silent fetch or a silent drop.

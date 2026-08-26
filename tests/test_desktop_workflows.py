@@ -9,7 +9,7 @@ from typing import ClassVar
 from spaceslug.dataset import verify_bundle
 from spaceslug.desktop import DesktopController
 from spaceslug.openai_api import ModelResponder, ResponderResult
-from spaceslug.workspace import IngestionError, LicenseRequiredError
+from spaceslug.workspace import IngestionError
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -104,14 +104,14 @@ class DesktopDatasetWorkflowTest(unittest.TestCase):
             self.assertEqual(training_bundle.manifest["preprocessing"]["pipeline"], "spaceslug-prompt-target")
             self.assertTrue(controller.training_bundle_path.endswith(".dts"))
 
-    def test_license_required_before_import(self):
+    def test_local_import_without_license(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             src = root / "notes.txt"
             src.write_text("data\n", encoding="utf-8")
             controller = DesktopController(workspace_root=root / "ws")
-            with self.assertRaises(LicenseRequiredError):
-                controller.import_local_source(src)
+            imported = controller.import_local_source(src)
+            self.assertEqual(imported.license, "")
 
     def test_create_dataset_requires_imports(self):
         with tempfile.TemporaryDirectory() as directory:
