@@ -150,8 +150,8 @@ class TinyGpuResponder(ModelResponder):
             generated.append(token)
             context.append(token)
         completion = self.tokenizer.decode(generated)
-        content = (f"Spaceslug-Tiny GPU responder (backend={self.backend_id}, model={self.model_id}).\\n"
-                   f"Native Vulkan/RADV deterministic generation ({len(generated)} tokens).\\n\\n{completion}")
+        content = (f"Spaceslug-Tiny GPU responder (backend={self.backend_id}, model={self.model_id}).\n"
+                   f"Native Vulkan/RADV deterministic generation ({len(generated)} tokens).\n\n{completion}")
         return ResponderResult(content=content, prompt_tokens=len(tokens), completion_tokens=len(generated))
 
 
