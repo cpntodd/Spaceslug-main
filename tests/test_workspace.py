@@ -1,10 +1,13 @@
 import http.server
 import json
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from spaceslug.dataset import verify_bundle
 from spaceslug.workspace import (
@@ -14,11 +17,16 @@ from spaceslug.workspace import (
     IngestionError,
     InvalidURLError,
     LicenseRequiredError,
+    PDFExtractionError,
+    PDFToolMissingError,
     SearchResult,
     UnsupportedKindError,
     WorkspaceService,
+    extract_pdf_text,
     extract_text,
+    infer_kind,
     read_local_file,
+    run_pdftotext,
     searxng_search,
     sha256_bytes,
     validate_http_url,
@@ -85,6 +93,45 @@ class LocalServer:
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=5)
+
+
+def _fake_runner(text: str):
+    """Return a deterministic pdftotext runner that writes *text* to the output."""
+
+    def runner(input_path, output_path):
+        output_path.write_text(text, encoding="utf-8")
+
+    return runner
+
+
+def _minimal_pdf(text: str) -> bytes:
+    """Build a tiny valid single-page PDF whose visible text is *text*."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+    ]
+    stream = b"BT /F1 12 Tf 72 720 Td (" + text.encode("latin-1") + b") Tj ET"
+    objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    parts = [b"%PDF-1.4\n"]
+    offsets: dict[int, int] = {}
+    for index, obj in enumerate(objects, start=1):
+        offsets[index] = len(b"".join(parts))
+        parts.append(f"{index} 0 obj\n".encode("ascii"))
+        parts.append(obj + b"\nendobj\n")
+
+    xref_offset = len(b"".join(parts))
+    parts.append(b"xref\n0 6\n0000000000 65535 f \n")
+    for index in range(1, 6):
+        parts.append(f"{offsets[index]:010d} 00000 n \n".encode("ascii"))
+    parts.append(b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n")
+    parts.append(str(xref_offset).encode("ascii") + b"\n%%EOF\n")
+    return b"".join(parts)
 
 
 class WorkspaceServiceTest(unittest.TestCase):
@@ -276,6 +323,100 @@ class WorkspaceServiceTest(unittest.TestCase):
     def test_extract_text_unknown_kind(self):
         with self.assertRaises(UnsupportedKindError):
             extract_text(b"x", "binary", source_id="sha")
+
+    def test_infer_kind_pdf(self):
+        self.assertEqual(infer_kind("paper.pdf"), "pdf")
+        self.assertEqual(infer_kind("paper.PDF"), "pdf")
+        self.assertEqual(infer_kind("document.bin", "application/pdf"), "pdf")
+        self.assertEqual(infer_kind("document.bin", "application/pdf; charset=binary"), "pdf")
+
+    def test_pdf_extension_is_readable_locally(self):
+        with tempfile.TemporaryDirectory() as directory:
+            src = Path(directory) / "paper.pdf"
+            raw = b"%PDF-1.4 fake bytes"
+            src.write_bytes(raw)
+            data, meta = read_local_file(src)
+            self.assertEqual(data, raw)
+            self.assertEqual(meta["name"], "paper.pdf")
+
+    def test_pdf_extraction_with_injected_runner(self):
+        raw = b"%PDF-1.4 fake"
+        staged: dict[str, bytes] = {}
+
+        def runner(input_path, output_path):
+            staged["data"] = input_path.read_bytes()
+            output_path.write_text("PDF extracted text", encoding="utf-8")
+
+        records = extract_pdf_text(raw, "sha", runner=runner)
+        self.assertEqual(staged["data"], raw)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["kind"], "text")
+        self.assertEqual(records[0]["text"], "PDF extracted text")
+        self.assertEqual(records[0]["source"], "sha")
+
+    def test_pdf_extraction_empty_output(self):
+        with self.assertRaises(PDFExtractionError):
+            extract_pdf_text(b"%PDF-1.4 fake", "sha", runner=_fake_runner("  \n\t "))
+
+    def test_pdf_extraction_no_output_file(self):
+        def runner(input_path, output_path):
+            pass
+
+        with self.assertRaises(PDFExtractionError):
+            extract_pdf_text(b"%PDF-1.4 fake", "sha", runner=runner)
+
+    def test_run_pdftotext_missing_tool(self):
+        with mock.patch("spaceslug.workspace._PDFTOTEXT", "spaceslug-no-such-tool"), self.assertRaises(
+            PDFToolMissingError
+        ):
+            run_pdftotext(Path("in.pdf"), Path("out.txt"))
+
+    def test_run_pdftotext_failure(self):
+        completed = subprocess.CompletedProcess([], returncode=1, stdout=b"", stderr=b"boom")
+        with mock.patch("spaceslug.workspace.subprocess.run", return_value=completed) as run, self.assertRaises(
+            PDFExtractionError
+        ) as ctx:
+            run_pdftotext(Path("in.pdf"), Path("out.txt"))
+        self.assertIn("boom", str(ctx.exception))
+        run.assert_called_once()
+
+    def test_pdf_local_import_retains_checksum_and_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "paper.pdf"
+            raw = b"%PDF-1.4 fake bytes"
+            src.write_bytes(raw)
+            ws = WorkspaceService(root / "ws", pdftotext_runner=_fake_runner("PDF body"))
+            imported = ws.import_local(src, license="CC-BY-4.0")
+            self.assertEqual(imported.kind, "pdf")
+            self.assertEqual(imported.sha256, sha256_bytes(raw))
+            self.assertEqual(imported.bytes, len(raw))
+            self.assertEqual(imported.retrieval, "local")
+            self.assertEqual(imported.records[0]["kind"], "text")
+            self.assertEqual(imported.records[0]["text"], "PDF body")
+            self.assertEqual(imported.to_provenance()["kind"], "pdf")
+            raw_path = ws.ingest_dir / imported.sha256[:2] / imported.sha256 / "raw"
+            self.assertEqual(raw_path.read_bytes(), raw)
+            self.assertEqual(ws.list_imports()[0].kind, "pdf")
+
+    def test_pdf_bundle_uses_extracted_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "paper.pdf"
+            src.write_bytes(b"%PDF-1.4 fake bytes")
+            ws = WorkspaceService(root / "ws", pdftotext_runner=_fake_runner("PDF body"))
+            imported = ws.import_local(src, license="CC-BY-4.0")
+            bundle = ws.create_dataset("pdf-ds", [imported])
+            verified = verify_bundle(bundle.root)
+            self.assertEqual(verified.stats()["train"], 1)
+            self.assertEqual(verified.records("train")[0]["text"], "PDF body")
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "pdftotext executable not available")
+    def test_pdf_extraction_real_pdftotext(self):
+        records = extract_pdf_text(_minimal_pdf("Hello PDF"), "sha", runner=run_pdftotext)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["kind"], "text")
+        self.assertIn("Hello PDF", records[0]["text"])
 
 
 if __name__ == "__main__":

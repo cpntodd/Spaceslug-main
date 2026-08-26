@@ -17,6 +17,8 @@ from __future__ import annotations
 import hashlib
 import json
 import socket
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -25,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .dataset import DatasetBundle, create_bundle
 
@@ -33,9 +35,10 @@ from .dataset import DatasetBundle, create_bundle
 
 DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
-ALLOWED_LOCAL_EXTENSIONS = (".txt", ".md", ".jsonl")
+ALLOWED_LOCAL_EXTENSIONS = (".txt", ".md", ".jsonl", ".pdf")
 _READ_CHUNK = 64 * 1024
 _USER_AGENT = "spaceslug-ingest/0.1"
+_PDFTOTEXT = "pdftotext"
 
 # Text fields recognized by the basic JSON/JSONL extractor, in priority order.
 _TEXT_FIELDS = ("text", "content", "body", "prompt", "completion", "instruction", "response")
@@ -77,6 +80,14 @@ class InvalidURLError(IngestionError):
 
 class LicenseRequiredError(IngestionError):
     """A license confirmation is required before a source can be ingested."""
+
+
+class PDFExtractionError(IngestionError):
+    """``pdftotext`` failed to produce text from a PDF source."""
+
+
+class PDFToolMissingError(IngestionError):
+    """The ``pdftotext`` executable is not available on ``PATH``."""
 
 
 # --- Small helpers -----------------------------------------------------------
@@ -140,6 +151,8 @@ def infer_kind(name: str, content_type: str | None = None) -> str:
             return "jsonl"
         if media_type in ("text/html", "application/xhtml+xml"):
             return "html"
+        if media_type == "application/pdf":
+            return "pdf"
     suffix = Path(name).suffix.lower()
     if suffix in (".md", ".markdown"):
         return "md"
@@ -149,6 +162,8 @@ def infer_kind(name: str, content_type: str | None = None) -> str:
         return "json"
     if suffix in (".html", ".htm"):
         return "html"
+    if suffix == ".pdf":
+        return "pdf"
     return "txt"
 
 
@@ -245,13 +260,69 @@ def _extract_html_text(data: bytes) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def extract_text(data: bytes, kind: str, *, source_id: str) -> list[dict]:
+def run_pdftotext(input_path: Path, output_path: Path) -> None:
+    """Run the ``pdftotext`` executable, writing plain text to *output_path*.
+
+    This is the default runner used by :func:`extract_pdf_text`. It exists as a
+    separate, injectable helper so tests can replace it with a deterministic
+    fake that writes a known output file without invoking the real executable.
+    """
+    try:
+        completed = subprocess.run(
+            [_PDFTOTEXT, str(input_path), str(output_path)],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise PDFToolMissingError(
+            "pdftotext executable not found; install poppler-utils to ingest PDF sources"
+        ) from exc
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        suffix = f": {stderr}" if stderr else ""
+        raise PDFExtractionError(f"pdftotext failed with exit code {completed.returncode}{suffix}")
+
+
+def extract_pdf_text(
+    data: bytes,
+    source_id: str,
+    *,
+    runner: Callable[[Path, Path], None] = run_pdftotext,
+) -> list[dict]:
+    """Extract a single text record from raw PDF *data* using ``pdftotext``.
+
+    The raw bytes are staged to a temporary ``.pdf`` file and ``pdftotext``
+    writes a temporary text file; both are removed afterwards. The original
+    bytes are never modified. Fails closed with a clear error when the tool is
+    absent, the run fails, or no text is produced.
+    """
+    with tempfile.TemporaryDirectory(prefix="spaceslug-pdf-") as directory:
+        temp_dir = Path(directory)
+        input_path = temp_dir / "source.pdf"
+        output_path = temp_dir / "source.txt"
+        input_path.write_bytes(data)
+        runner(input_path, output_path)
+        if not output_path.is_file():
+            raise PDFExtractionError("pdftotext produced no output file")
+        text = _decode_text(output_path.read_bytes()).strip()
+    if not text:
+        raise PDFExtractionError("no text extracted from PDF")
+    return [_record(source_id, 0, "text", text)]
+
+
+def extract_text(
+    data: bytes,
+    kind: str,
+    *,
+    source_id: str,
+    pdftotext_runner: Callable[[Path, Path], None] = run_pdftotext,
+) -> list[dict]:
     """Extract basic text records from *data* according to *kind*.
 
-    ``kind`` is one of ``txt``, ``md``, ``jsonl``, ``json``, or ``html``. Every
-    returned record carries a stable content-addressed ``record_id`` and a
-    ``text`` field. The original bytes are never modified; decoding is the only
-    lossless step and invalid UTF-8 fails closed.
+    ``kind`` is one of ``txt``, ``md``, ``jsonl``, ``json``, ``html``, or
+    ``pdf``. Every returned record carries a stable content-addressed
+    ``record_id`` and a ``text`` field. The original bytes are never modified;
+    decoding is the only lossless step and invalid UTF-8 fails closed.
     """
     kind = kind.lower()
     if kind == "txt":
@@ -264,13 +335,15 @@ def extract_text(data: bytes, kind: str, *, source_id: str) -> list[dict]:
         return _extract_json_records(data, source_id)
     if kind == "html":
         return [_record(source_id, 0, "html", _extract_html_text(data))]
+    if kind == "pdf":
+        return extract_pdf_text(data, source_id, runner=pdftotext_runner)
     raise UnsupportedKindError(f"unsupported source kind {kind!r}")
 
 
 # --- Local file and HTTP retrieval --------------------------------------------
 
 def read_local_file(path: str | Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> tuple[bytes, dict]:
-    """Safely read a local ``.txt``/``.md``/``.jsonl`` file with a byte limit.
+    """Safely read a local ``.txt``/``.md``/``.jsonl``/``.pdf`` file with a byte limit.
 
     Returns ``(raw_bytes, metadata)``. Symlinks are resolved and the extension
     and size are validated before reading.
@@ -396,12 +469,18 @@ class SearchResult:
 class WorkspaceService:
     """Headless workspace that stages imports and emits deterministic bundles."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        pdftotext_runner: Callable[[Path, Path], None] | None = None,
+    ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.ingest_dir = self.root / "ingest"
         self.bundles_dir = self.root / "bundles"
         self.ingest_dir.mkdir(parents=True, exist_ok=True)
         self.bundles_dir.mkdir(parents=True, exist_ok=True)
+        self._pdftotext_runner = pdftotext_runner or run_pdftotext
 
     def import_local(self, path: str | Path, *, license: str, max_bytes: int = DEFAULT_MAX_BYTES) -> ImportedSource:
         data, meta = read_local_file(path, max_bytes=max_bytes)
@@ -457,7 +536,7 @@ class WorkspaceService:
         raw_path = record_dir / "raw"
         if not raw_path.exists():
             raw_path.write_bytes(data)
-        records = tuple(extract_text(data, kind, source_id=sha))
+        records = tuple(extract_text(data, kind, source_id=sha, pdftotext_runner=self._pdftotext_runner))
         imported = ImportedSource(
             source=source,
             sha256=sha,
