@@ -790,7 +790,7 @@ class BackendSession:
         logits = logits_all[(t - 1) * vp:t * vp][:model.vocab_size]
         reference = LoRAProjectedTinyAttention(model, adapter).logits_for_tokens(tokens)
         parity = compare_float_arrays(logits, reference)
-        return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, False, {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
+        return ExecutionResult("ok" if parity["status"] == "pass" else "error", "tiny_lora_forward", "vulkan-radv", self.runtime_revision, self.capabilities().device, parity["status"] == "pass", {"parity": "cpu-lora-reference", "gpu_execution": parity["status"] == "pass", "adapter_targets": ["query", "key", "value", "output"], **parity}, {"logits": logits, "token_count": t})
 
     def _native_projection_backward(self, dy: list[float], weight: list[float], rows: int, input_size: int, output_size: int) -> list[float]:
         import array, ctypes, os
