@@ -340,6 +340,26 @@ class PersistentTinyTrainer:
             except (AttributeError, NotImplementedError): raise ValueError("checkpoint requires native AdamW state support")
         return trainer
 
+    def train_device_batch(self, tokens: list[int], targets: list[int], mask: list[int], controls: list[int], window_tokens: int) -> dict[str, Any]:
+        """Stage a bounded batch on-device and invoke only the full-graph ABI.
+
+        The runtime currently reports ``unsupported`` because its BatchBuffer is
+        not yet connected to the complete LoRA graph. This method intentionally
+        fails closed rather than silently replacing the device batch with the
+        host per-token loop used by ``train_tokens``.
+        """
+        if window_tokens <= 0 or len(tokens) != len(targets) or len(tokens) != len(mask) or len(tokens) % window_tokens:
+            raise ValueError("device batch requires rectangular token, target, and mask arrays")
+        windows = len(tokens) // window_tokens
+        if not 0 < windows <= 32 or len(controls) != windows:
+            raise ValueError("device batch requires 1..32 windows and one control per window")
+        batch = self.backend.create_tiny_dataset_batch(self.handle, windows, window_tokens)
+        try:
+            self.backend.upload_tiny_dataset_batch(batch, tokens, targets, mask, controls, windows, window_tokens)
+            return self.backend.train_tiny_dataset_batch(batch, self.handle, self.learning_rate, float(sum(mask) or 1))
+        finally:
+            self.backend.close_tiny_dataset_batch(batch)
+
     def train_tokens_adamw(self, tokens: list[int], targets: list[int], mask: list[int] | None = None) -> dict[str, Any]:
         return self._train_tokens(tokens, targets, mask, "adamw")
 

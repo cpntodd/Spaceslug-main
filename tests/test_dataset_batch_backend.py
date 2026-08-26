@@ -16,6 +16,7 @@ class DatasetBatchBackendTest(unittest.TestCase):
         native.vulkan_runtime_dataset_batch_process.return_value = 0
         native.spaceslug_tiny_forward_upload_dataset_batch.return_value = 0
         native.spaceslug_tiny_forward_train_dataset_batch.return_value = 0
+        native.spaceslug_tiny_forward_train_dataset_batch_full.return_value = 0
         self.session._library = native
         self.session._library_path = self.session.runtime_root / "libvulkan_runtime_api.so"
         self.session._device = "test-device"
@@ -45,6 +46,12 @@ class DatasetBatchBackendTest(unittest.TestCase):
             self.session.create_tiny_dataset_batch(graph, 33, 3)
         with self.assertRaises(ValueError):
             self.session.upload_tiny_dataset_batch(batch, [1] * 6, [2] * 6, [1] * 6, [7, 8], 2, 129)
+
+    def test_full_graph_api_is_explicitly_capability_gated(self):
+        result = self.session.train_tiny_dataset_batch(ctypes.c_void_p(9), ctypes.c_void_p(10), 0.1)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["gpu_execution"])
+        self.session._library.spaceslug_tiny_forward_train_dataset_batch_full.assert_called_once()
 
     def test_invalid_shapes_are_rejected_before_native_call(self):
         with self.assertRaises(ValueError):
