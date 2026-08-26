@@ -683,7 +683,7 @@ class DesktopApp:
         placement = snapshot["placement"]
         training_placement = snapshot["training_placement"]
         cpu = snapshot["cpu_execution"]
-        self._cpu_execution_label.configure(text=f"CPU workers: {cpu['workers']} / {cpu['available_cores']} cores (1 reserved for UI; GPU remains primary)")
+        self._cpu_execution_label.configure(text=f"CPU workers: {cpu['workers']} / {cpu['available_cores']} cores (six-worker host pool; 1 reserved for UI; GPU remains primary)")
         gate = snapshot["training"]["native_gpu_readiness"]
         self._gpu_gate_label.configure(text=f"Native GPU training: {'READY' if gate['ready'] else 'disabled'} — {gate['reason']}")
         self._placement_requested.configure(text=f"requested: {training_placement['requested']} (gpu_primary_requested={snapshot['gpu_primary_requested']})")

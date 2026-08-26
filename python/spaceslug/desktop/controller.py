@@ -220,7 +220,9 @@ class DesktopController:
         self.training_steps = 10
         self.training_learning_rate = 0.2
         self.training_batch_size = 1
-        self.cpu_worker_count = max(1, min(8, (os.cpu_count() or 2) - 1))
+        # Six bounded host workers keeps CPU-side preparation responsive while
+        # leaving cores and the Vulkan driver available for GPU-primary work.
+        self.cpu_worker_count = max(1, min(6, (os.cpu_count() or 2) - 1))
         self.training_rank = 4
         self.training_prompt = ""
         self.latest_loss: float | None = None
