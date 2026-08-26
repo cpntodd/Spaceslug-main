@@ -21,7 +21,7 @@ from .profile import fixed_tiny_profile_lines
 
 _LOSS_CANVAS_WIDTH = 480
 _LOSS_CANVAS_HEIGHT = 200
-_POLL_INTERVAL_MS = 200
+_POLL_INTERVAL_MS = 500
 
 
 class DesktopApp:

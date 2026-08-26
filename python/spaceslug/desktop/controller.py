@@ -833,6 +833,11 @@ class DesktopController:
         return False
 
     def training_status(self) -> dict:
+        # Derive telemetry from the retained series as well as callback state so
+        # a UI refresh never shows stale placeholders while callbacks are queued.
+        history = self.loss.history
+        loss_high = self.loss_high if self.loss_high is not None else (max(history) if history else None)
+        loss_low = self.loss_low if self.loss_low is not None else (min(history) if history else None)
         status: dict[str, Any] = {
             "state": self._training_state,
             "mode": self._training_mode,
@@ -841,8 +846,8 @@ class DesktopController:
             "latest_loss": self.latest_loss,
             "loss_history": self.loss.history,
             "training_start_time": self.training_start_time,
-            "loss_high": self.loss_high,
-            "loss_low": self.loss_low,
+            "loss_high": loss_high,
+            "loss_low": loss_low,
             "model_size_bytes": self.model_size_bytes,
             "training_metadata_path": self.training_metadata_path,
             "rank": self.training_rank,
