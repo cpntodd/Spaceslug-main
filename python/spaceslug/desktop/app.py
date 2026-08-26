@@ -324,6 +324,8 @@ class DesktopApp:
         self._loss_canvas = tk.Canvas(frame, width=_LOSS_CANVAS_WIDTH, height=_LOSS_CANVAS_HEIGHT, background="#0d1117", highlightthickness=0)
         self._loss_canvas.pack(fill="x", pady=4)
 
+        self._gpu_gate_label = self._status_label(frame)
+        self._gpu_gate_label.pack(anchor="w", pady=(4, 0))
         ttk.Label(frame, text="Live loss worm (fed by the training worker thread)").pack(anchor="w", pady=(4, 2))
         self._training_status_text = self._readonly_text(frame, self.controller.capability_boundary("training"), height=10)
         self._training_status_text.pack(fill="x", pady=(2, 0))
@@ -611,9 +613,12 @@ class DesktopApp:
         self.controller.loss.draw(self._loss_canvas, _LOSS_CANVAS_WIDTH, _LOSS_CANVAS_HEIGHT)
 
     def refresh(self) -> None:
+        self.controller.refresh_gpu_readiness_if_needed()
         snapshot = self.controller.snapshot()
         placement = snapshot["placement"]
         training_placement = snapshot["training_placement"]
+        gate = snapshot["training"]["native_gpu_readiness"]
+        self._gpu_gate_label.configure(text=f"Native GPU training: {'READY' if gate['ready'] else 'disabled'} — {gate['reason']}")
         self._placement_requested.configure(text=f"requested: {training_placement['requested']} (gpu_primary_requested={snapshot['gpu_primary_requested']})")
         self._placement_actual.configure(text=f"actual: {training_placement['actual']} · hardware: {training_placement['hardware']}")
         self._placement_device.configure(text=f"device: {placement['device']}")

@@ -223,6 +223,7 @@ class DesktopController:
         self._training_result: dict | None = None
         self._training_paths: TrainingJobPaths | None = None
         self._training_mode = "idle"
+        self._gpu_readiness_error = "GPU readiness has not been refreshed"
         self._loss_queue: queue.Queue[tuple[int, float]] = queue.Queue()
         self._cancel_event = threading.Event()
 
@@ -257,10 +258,23 @@ class DesktopController:
 
     def refresh_gpu_readiness(self) -> GpuReadiness:
         """Safely inspect the configured native runtime and update placement."""
-        readiness = refresh_gpu_readiness_probe(self.runtime_root, self.runtime_revision)
+        try:
+            readiness = refresh_gpu_readiness_probe(self.runtime_root, self.runtime_revision)
+        except Exception as exc:
+            self._gpu_readiness_error = f"{type(exc).__name__}: {exc}"
+            self.gpu_readiness = None
+            raise
         self.gpu_readiness = readiness
+        self._gpu_readiness_error = ""
         self.placement = resolve_placement(readiness.placement_probe())
         return readiness
+
+    def refresh_gpu_readiness_if_needed(self) -> None:
+        if self.gpu_readiness is None:
+            try:
+                self.refresh_gpu_readiness()
+            except Exception:
+                pass
 
     def set_gpu_primary_requested(self, value: bool) -> None:
         self.gpu_primary_requested = bool(value)
@@ -625,6 +639,8 @@ class DesktopController:
 
     def native_gpu_training_readiness(self) -> dict[str, Any]:
         probe = self.gpu_readiness.placement_probe() if self.gpu_readiness is not None else None
+        if probe is None:
+            return {"ready": False, "reason": self._gpu_readiness_error or "GPU readiness has not been refreshed", "missing": []}
         return native_gpu_readiness(probe, self.training_rank)
 
     def start_native_gpu_training(
