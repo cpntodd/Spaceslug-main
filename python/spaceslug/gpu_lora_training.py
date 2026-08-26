@@ -356,7 +356,7 @@ class PersistentTinyTrainer:
         batch = self.backend.create_tiny_dataset_batch(self.handle, windows, window_tokens)
         try:
             self.backend.upload_tiny_dataset_batch(batch, tokens, targets, mask, controls, windows, window_tokens)
-            return self.backend.train_tiny_dataset_batch(batch, self.handle, self.learning_rate, float(sum(mask) or 1))
+            return self.backend.train_tiny_dataset_batch(self.handle, batch, self.learning_rate, float(sum(mask) or 1))
         finally:
             self.backend.close_tiny_dataset_batch(batch)
 
