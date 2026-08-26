@@ -102,6 +102,11 @@ def run_native_training(
         "checkpoint": str(checkpoint), "backend": "vulkan-radv", "gpu_execution": True,
     }, sort_keys=True, indent=2) + "\n")
     revision = "sha256:" + hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    # Keep the adapter checkpoint discoverable by the desktop responder.
+    artifact_manifest = json.loads((artifact / "native-training.json").read_text())
+    checkpoint_data = json.loads(checkpoint.read_text())
+    artifact_manifest["adapter"] = checkpoint_data.get("adapter")
+    (artifact / "native-training.json").write_text(json.dumps(artifact_manifest, sort_keys=True, indent=2) + "\n")
     experiment = Path(experiment); experiment.mkdir(parents=True, exist_ok=True)
     experiment_file = experiment / "experiment.json"
     metrics = {"initial_train_loss": losses[0] if losses else None, "final_train_loss": losses[-1] if losses else None,

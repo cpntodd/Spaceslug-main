@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 
 from .backend import BackendError, BackendSession
 from .projected_attention_reference import ProjectedTinyAttentionModel
+from .lora import TinyLoRAAdapter
 from .tokenizer import ByteTokenizer, default_tokenizer
 
 DEFAULT_HOST = "127.0.0.1"
@@ -112,11 +113,12 @@ class TinyGpuResponder(ModelResponder):
     backend_id = "vulkan-radv-tiny"
     model_id = "spaceslug-tiny-attention-v1"
 
-    def __init__(self, backend: BackendSession, model=None, tokenizer=None, *, max_echo_chars: int = 1000, max_new_tokens: int = 32):
+    def __init__(self, backend: BackendSession, model=None, tokenizer=None, *, adapter_state=None, max_echo_chars: int = 1000, max_new_tokens: int = 32):
         if max_new_tokens <= 0 or max_new_tokens > 128:
             raise ValueError("max_new_tokens must be between 1 and 128")
         self.backend = backend
         self.model = model if model is not None else ProjectedTinyAttentionModel(259, 64)
+        self.adapter = TinyLoRAAdapter.from_state_dict(adapter_state) if adapter_state else None
         self.tokenizer = tokenizer if tokenizer is not None else default_tokenizer()
         self.max_echo_chars = max_echo_chars
         self.max_new_tokens = max_new_tokens
@@ -131,7 +133,10 @@ class TinyGpuResponder(ModelResponder):
         generated = []
         context = list(tokens)
         for _ in range(self.max_new_tokens):
-            current = self.backend.execute_projected_attention_gpu(context[-128:], self.model)
+            if self.adapter is not None:
+                current = self.backend.execute_tiny_lora_forward(context[-128:], self.model, self.adapter)
+            else:
+                current = self.backend.execute_projected_attention_gpu(context[-128:], self.model)
             if current.status != "ok" or not current.metrics.get("gpu_execution", False):
                 raise BackendError(current.metrics.get("reason", "native GPU generation unavailable"))
             token = max(range(len(current.output["logits"])), key=current.output["logits"].__getitem__)
