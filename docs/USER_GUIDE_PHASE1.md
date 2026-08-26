@@ -13,10 +13,10 @@
 > (`python/spaceslug/workspace.py`) are committed and wired into the desktop.
 > Remaining boundaries — CPU-only Phase 1 training, the non-generative chat
 > responder, and non-streaming API — are surfaced in the app and recorded here.
-> PDF text extraction is now implemented in the headless workspace service via
-> the local `pdftotext` executable; only the desktop file picker has not yet been
-> expanded to list `.pdf`. See [`STAGED_ROADMAP.md`](STAGED_ROADMAP.md) for the
-> authoritative fixed Tiny boundaries.
+> PDF text extraction is implemented through the native desktop file picker and
+> headless workspace service via the local `pdftotext` executable. See
+> [`STAGED_ROADMAP.md`](STAGED_ROADMAP.md) for the authoritative fixed Tiny
+> boundaries.
 
 ## What this guide covers
 
@@ -70,12 +70,14 @@ application:
 
 What each tab does:
 
-- **Home** — the fixed Spaceslug-Tiny profile (hidden size, layers, attention
-  heads, context length, training mode, dtype, LoRA rank, parameter estimate)
-  and a **GPU-primary / CPU fallback status** box showing *requested*, *actual*,
-  *hardware*, and a reason.
+- **Home** — the fixed native Tiny contract (`H=64`, `V=259`, `Vp=320`,
+  `T=128`, rank `4` or `8`), persisted workspace/dataset/checkpoint/artifact/
+  experiment/temp paths, a **GPU-primary / CPU fallback status** box, and a
+  refreshable native-runtime readiness diagnostic. It reports the inspected
+  runtime root/library, device and RADV-versus-lavapipe classification, expected
+  Tiny ABI operations, and an actionable reason for a fallback.
 - **Datasets** — the wired ingestion workflow: a required license field, local
-  source import (`.txt`/`.md`/`.jsonl`), approved-URL import, SearXNG search and
+  source import (`.txt`/`.md`/`.jsonl`/`.pdf`), approved-URL import, SearXNG search and
   result selection, and `.dts` bundle creation.
 - **Build & Train** — training controls (steps, learning rate, batch size),
   start/stop, and the live **loss worm** canvas with a status readout (run id,
