@@ -145,6 +145,7 @@ def run_native_training(
     (artifact / "native-training.json").write_text(json.dumps({
         "format": "spaceslug-native-tiny-adapter", "profile": "tiny_h64_v259_vp320_t128_rank4",
         "checkpoint": str(checkpoint), "backend": "vulkan-radv", "gpu_execution": True,
+        "training_execution": "full-device-batch" if device_batch_status == "ok" else "bounded-gpu-graph",
         "dataset_device_resident": device_batch_status == "ok", "device_batch_attempted": device_batch_attempted,
         "device_batch_status": device_batch_status, "device_batch_reason": device_batch_reason,
         "split_record_counts": split_counts,
@@ -160,6 +161,7 @@ def run_native_training(
     experiment_file = experiment / "experiment.json"
     metrics = {"initial_train_loss": losses[0] if losses else None, "final_train_loss": losses[-1] if losses else None,
                "stopped_reason": stopped, "steps": len(losses), "gpu_execution": True,
+               "training_execution": "full-device-batch" if device_batch_status == "ok" else "bounded-gpu-graph",
                "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status,
                "device_batch_reason": device_batch_reason, "split_record_counts": split_counts, "validation_metrics": validation_metrics,
                "test_metrics": test_metrics}
