@@ -29,7 +29,6 @@ class DesktopApp:
 
     def __init__(self, controller: DesktopController | None = None, root: tk.Tk | None = None) -> None:
         self.controller = controller or DesktopController(code_revision=detect_code_revision())
-        self.controller.initialize_inference()
         self.root = root or tk.Tk()
         self.root.title("Spaceslug-main — desktop (Phase 1)")
         self.root.geometry("820x720")
@@ -726,8 +725,9 @@ class DesktopApp:
     def run(self) -> None:
         try:
             self.controller.refresh_runtime()
+            self.controller.initialize_inference()
         except Exception:
-            pass
+            self.controller.initialize_inference()
         self.refresh()
         self.root.mainloop()
 
