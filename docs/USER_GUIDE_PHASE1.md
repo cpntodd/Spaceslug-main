@@ -81,7 +81,8 @@ What each tab does:
   result selection, an imported-source table, and `.dts` bundle creation. The
   table shows filename/source, extension/type, import date, and file size.
 - **Build & Train** — training controls (steps, learning rate, batch size),
-  start/stop, and the live **loss worm** canvas with a status readout (run id,
+  separate **Start native GPU training** and **Start CPU reference training**
+  actions, shared Stop, and the live **loss worm** canvas with a status readout (run id,
   checkpoint/artifact/experiment paths, loss trajectory, placement).
 - **Interact** — a chat prompt with a transcript, backed by the committed CPU
   Tiny echo responder.
@@ -165,11 +166,17 @@ fallback visible rather than silent.
   contract — for the fixed Tiny profiles, the documented graph-owned operations.
   See [`STAGED_ROADMAP.md`](STAGED_ROADMAP.md) and
   [`TINY_GPU_TRAINING_STATUS.md`](TINY_GPU_TRAINING_STATUS.md).
-- **Training placement is explicit: requested vs actual.** The Home and
-  Build & Train tabs show both *requested* (what you asked for: `gpu-primary` or
-  `cpu`) and *actual* (what the job really runs on). In Phase 1, dataset-integrated
-  projected Tiny training always resolves to `cpu-fallback` — the CPU reference
-  is authoritative — even when a hardware GPU is present, and the reason is shown.
+- **Training mode is selected explicitly.** **Start native GPU training** is
+  enabled only after the readiness diagnostic confirms a hardware RADV device,
+  the required native operations, and the currently implemented rank-4 graph.
+  It runs host-staged dataset windows through native Vulkan forward/backward/loss/
+  SGD and reports `backend: vulkan-radv` plus `gpu_execution: true`. Submissions
+  are chunked to eight tokens to remain below the gfx803 compute-ring watchdog.
+  Rank 8 remains disabled because the current native graph constructor accepts
+  rank 4 only.
+- **CPU reference remains independently available.** **Start CPU reference
+  training** runs the deterministic projected-attention AdamW implementation and
+  reports `mode: cpu-reference`; selecting native GPU never silently invokes it.
 - **Fallback is explicit, never silent** ([`DECISIONS.md`](DECISIONS.md), D005).
   Software Vulkan (lavapipe) is reported as CPU fallback, not as GPU primary, and
   any fallback that occurs is captured in metrics rather than hidden.

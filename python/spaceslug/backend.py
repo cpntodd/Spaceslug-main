@@ -1204,12 +1204,16 @@ class BackendSession:
 
     def accumulate_tiny_backward(self, handle: ctypes.c_void_p, token: int, position: int, target: int, mask: int, _fn: Any | None = None) -> dict[str, Any]:
         import array
-        outputs = [array.array("f", [0.0] * n) for n in (1, 320, 64, 64, 64, 64, 64, 64, 64)]
-        pointers = [(ctypes.c_float * len(values)).from_buffer(values) for values in outputs]
+        # ABI order is doutput input, then loss and seven gradient outputs.
+        # doutput is H=64; using a one-float loss buffer in that slot corrupts
+        # adjacent host memory and can device-loss/segfault during graph teardown.
+        # Query/key/value/context/state gradients are full Tcap*H tensors.
+        values = [array.array("f", [0.0] * n) for n in (64, 1, 320, 64, 128 * 64, 128 * 64, 128 * 64, 128 * 64, 128 * 64)]
+        pointers = [(ctypes.c_float * len(item)).from_buffer(item) for item in values]
         fn = _fn or self._native().spaceslug_tiny_forward_token_step_training_backward_accumulate
         code = fn(handle, token, position, target, mask, *pointers)
         if code != 0: raise BackendError(f"Tiny backward accumulation returned {code}")
-        return {"loss": outputs[0].tolist(), "dlogits": outputs[1].tolist(), "dprojected": outputs[2].tolist(), "dquery": outputs[3].tolist(), "dkey": outputs[4].tolist(), "dvalue": outputs[5].tolist(), "dcontext": outputs[6].tolist(), "dstates": outputs[7].tolist()}
+        return {"loss": values[1].tolist(), "dlogits": values[2].tolist(), "dprojected": values[3].tolist(), "dquery": values[4].tolist(), "dkey": values[5].tolist(), "dvalue": values[6].tolist(), "dcontext": values[7].tolist(), "dstates": values[8].tolist()}
 
     def accumulate_tiny_windows(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], mask: list[int], window_length: int) -> list[float]:
         if not tokens or len(tokens) != len(targets) or len(tokens) != len(mask) or len(tokens) % window_length:

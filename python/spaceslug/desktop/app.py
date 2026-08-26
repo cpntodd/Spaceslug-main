@@ -305,8 +305,10 @@ class DesktopApp:
         ttk.Label(controls, text="Batch:").pack(side="left", padx=(8, 0))
         self._variable("training_batch_size", str(self.controller.training_batch_size), self._on_batch_size)
         ttk.Spinbox(controls, from_=1, to=64, textvariable=self._vars["training_batch_size"], width=6).pack(side="left", padx=4)
-        self._train_button = ttk.Button(controls, text="Start training", command=self._start_training)
-        self._train_button.pack(side="left", padx=(8, 0))
+        self._gpu_train_button = ttk.Button(controls, text="Start native GPU training", command=self._start_gpu_training)
+        self._gpu_train_button.pack(side="left", padx=(8, 0))
+        self._cpu_train_button = ttk.Button(controls, text="Start CPU reference training", command=self._start_cpu_training)
+        self._cpu_train_button.pack(side="left", padx=(4, 0))
         self._stop_button = ttk.Button(controls, text="Stop", command=self._stop_training, state="disabled")
         self._stop_button.pack(side="left", padx=(4, 0))
 
@@ -478,15 +480,22 @@ class DesktopApp:
             pass
         self.refresh()
 
-    def _start_training(self) -> None:
+    def _begin_training(self, starter: Callable[[], dict]) -> None:
         try:
-            self.controller.start_training()
+            starter()
         except Exception as exc:
             self._set_training_status(f"start failed: {type(exc).__name__}: {exc}")
             return
-        self._train_button.configure(state="disabled")
+        self._gpu_train_button.configure(state="disabled")
+        self._cpu_train_button.configure(state="disabled")
         self._stop_button.configure(state="normal")
         self._schedule_training_poll()
+
+    def _start_gpu_training(self) -> None:
+        self._begin_training(self.controller.start_native_gpu_training)
+
+    def _start_cpu_training(self) -> None:
+        self._begin_training(self.controller.start_training)
 
     def _stop_training(self) -> None:
         self.controller.stop_training()
@@ -505,14 +514,16 @@ class DesktopApp:
             self.root.after(_POLL_INTERVAL_MS, self._poll_training)
         else:
             self._polling = False
-            self._train_button.configure(state="normal")
+            gate = status["native_gpu_readiness"]
+            self._gpu_train_button.configure(state="normal" if gate["ready"] else "disabled")
+            self._cpu_train_button.configure(state="normal")
             self._stop_button.configure(state="disabled")
 
     def _refresh_training_status(self, status: dict | None = None) -> None:
         status = status or self.controller.training_status()
         placement = status["placement"]
         lines = [
-            f"state: {status['state']} · completed_steps: {status['completed_steps']}",
+            f"state: {status['state']} · mode: {status['mode']} · completed_steps: {status['completed_steps']}",
             f"tiny_profile: {status['tiny_profile']} · rank: {status['rank']}",
             f"requested: {placement['requested']} · actual: {placement['actual']} · hardware: {placement['hardware']}",
             placement["reason"],
@@ -527,6 +538,7 @@ class DesktopApp:
             lines.append(f"experiment: {paths['experiment']}")
         if status["result"]:
             result = status["result"]
+            lines.append(f"backend: {result['backend']} · gpu_execution: {result['gpu_execution']}")
             lines.append(
                 f"artifact_revision: {result['artifact_revision']} · stopped: {result['stopped_reason']} · "
                 f"loss {result['initial_train_loss']:.6f} → {result['final_train_loss']:.6f}"
@@ -605,6 +617,10 @@ class DesktopApp:
         )
         self._redraw_loss()
         self._refresh_training_status(snapshot["training"])
+        if snapshot["training"]["state"] != "running":
+            gate = snapshot["training"]["native_gpu_readiness"]
+            self._gpu_train_button.configure(state="normal" if gate["ready"] else "disabled")
+            self._cpu_train_button.configure(state="normal")
         if not snapshot["api"]["running"]:
             self._api_start_button.configure(state="normal")
             self._api_stop_button.configure(state="disabled")

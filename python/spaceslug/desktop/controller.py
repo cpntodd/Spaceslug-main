@@ -28,6 +28,7 @@ from typing import Any
 
 from ..dataset import verify_bundle
 from ..filesystem_picker import FileSelection, pick_files
+from ..native_desktop_training import readiness as native_gpu_readiness, run_native_training
 from ..openai_api import (
     LOOPBACK_HOSTS,
     ModelResponder,
@@ -215,6 +216,7 @@ class DesktopController:
         self._training_error: BaseException | None = None
         self._training_result: dict | None = None
         self._training_paths: TrainingJobPaths | None = None
+        self._training_mode = "idle"
         self._loss_queue: queue.Queue[tuple[int, float]] = queue.Queue()
         self._cancel_event = threading.Event()
 
@@ -583,6 +585,7 @@ class DesktopController:
         self._training_paths = paths
         self._training_result = None
         self._training_error = None
+        self._training_mode = "cpu-reference"
         self._training_state = "running"
         self.latest_loss = None
         self.completed_steps = 0
@@ -595,6 +598,52 @@ class DesktopController:
         )
         self._training_thread.start()
         return self.training_status()
+
+    def native_gpu_training_readiness(self) -> dict[str, Any]:
+        probe = self.gpu_readiness.placement_probe() if self.gpu_readiness is not None else None
+        return native_gpu_readiness(probe, self.training_rank)
+
+    def start_native_gpu_training(
+        self, *, bundle_path: str | Path | None = None, steps: int | None = None,
+        learning_rate: float | None = None, checkpoint: str | Path | None = None,
+        artifact: str | Path | None = None, experiment: str | Path | None = None,
+    ) -> dict:
+        if self._training_thread is not None and self._training_thread.is_alive():
+            raise RuntimeError("training is already running")
+        gate = self.native_gpu_training_readiness()
+        if not gate["ready"]:
+            raise RuntimeError("native GPU training unavailable: " + gate["reason"])
+        bundle = self._resolve_training_bundle(bundle_path)
+        paths = self._resolve_training_paths(checkpoint, artifact, experiment)
+        self._training_paths = paths
+        self._training_result = None
+        self._training_error = None
+        self._training_mode = "native-gpu"
+        self._training_state = "running"
+        self.latest_loss = None
+        self.completed_steps = 0
+        self._cancel_event.clear()
+        self._training_thread = threading.Thread(
+            target=self._run_native_gpu_training,
+            args=(bundle, self.training_steps if steps is None else steps,
+                  self.training_learning_rate if learning_rate is None else learning_rate, paths),
+            name="spaceslug-desktop-native-gpu-training", daemon=True,
+        )
+        self._training_thread.start()
+        return self.training_status()
+
+    def _run_native_gpu_training(self, bundle: Path, steps: int, learning_rate: float, paths: TrainingJobPaths) -> None:
+        try:
+            self._training_result = run_native_training(
+                bundle, runtime_root=self.runtime_root, runtime_revision=self.runtime_revision,
+                rank=self.training_rank, steps=steps, learning_rate=learning_rate,
+                checkpoint=paths.checkpoint, artifact=paths.artifact, experiment=paths.experiment,
+                on_step=self._on_training_step, should_stop=self._cancel_event.is_set,
+            )
+            self._training_state = "finished"
+        except BaseException as exc:
+            self._training_error = exc
+            self._training_state = "error"
 
     def _run_training(self, bundle: Path, config: ProjectedAttentionConfig, paths: TrainingJobPaths) -> None:
         try:
@@ -648,6 +697,8 @@ class DesktopController:
     def training_status(self) -> dict:
         status: dict[str, Any] = {
             "state": self._training_state,
+            "mode": self._training_mode,
+            "native_gpu_readiness": self.native_gpu_training_readiness(),
             "completed_steps": self.completed_steps,
             "latest_loss": self.latest_loss,
             "loss_history": self.loss.history,
@@ -672,6 +723,8 @@ class DesktopController:
                 "stopped_reason": self._training_result.get("metrics", {}).get("stopped_reason"),
                 "final_train_loss": self._training_result.get("metrics", {}).get("final_train_loss"),
                 "initial_train_loss": self._training_result.get("metrics", {}).get("initial_train_loss"),
+                "backend": self._training_result.get("backend", "cpu-reference"),
+                "gpu_execution": bool(self._training_result.get("gpu_execution", False)),
             }
         if self._training_error is not None:
             status["error"] = f"{type(self._training_error).__name__}: {self._training_error}"
