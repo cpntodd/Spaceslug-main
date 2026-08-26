@@ -153,6 +153,19 @@ web content, with SearXNG as the search gateway:
   returns result URLs/titles/descriptions only — it **never auto-fetches a
   result document**. You select a result, then "Import selected" fetches it
   through the approved-URL path.
+- **Controlled documentation crawl.** The Datasets tab also provides a bounded
+  static-HTML crawl action. It parses readable text and links, follows only
+  approved same-origin HTTP(S) links by default, respects robots.txt, deduplicates
+  URLs, and persists a resumable JSON session with parent URL, depth, status,
+  content type, size, and SHA-256 provenance. Page/depth/byte limits and explicit
+  approval prevent unbounded crawling. Linked HTML, PDF, TXT, MD, and JSONL
+  resources route through the existing import handlers.
+- **Optional rendered-page adapter.** JavaScript-heavy documentation can use the
+  separately configured `SubprocessPageRenderer` only by explicit opt-in. It runs
+  an external renderer with a sanitized environment (no inherited cookies or
+  credentials), origin allowlisting, timeout/output limits, and an explicit
+  unavailable status when no executable is configured. It is never used by the
+  static crawler automatically.
 - **Limits.** Fetches enforce a byte budget and a time budget; exceeding either
   fails closed and reports an error in the tab's status line.
 

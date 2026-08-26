@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..dataset import verify_bundle
-from ..documentation_crawler import DocumentationCrawler, CrawlSession
+from ..documentation_crawler import DocumentationCrawler, CrawlSession, same_origin
 from ..filesystem_picker import FileSelection, pick_files
 from ..native_desktop_training import readiness as native_gpu_readiness, run_native_training
 from ..openai_api import (
@@ -398,7 +398,7 @@ class DesktopController:
         )
         session_path = self.paths.temp_dir / "documentation-crawl.json"
         approved_origin = seed
-        session = crawler.start(seed, approve=(lambda candidate: approve_all_same_origin and candidate.startswith(approved_origin)), session_path=session_path)
+        session = crawler.start(seed, approve=(lambda candidate: approve_all_same_origin and same_origin(approved_origin, candidate)), session_path=session_path)
         self.documentation_session = session
         self.imports.extend(item for item in self._workspace_service().list_imports() if item not in self.imports)
         return session
