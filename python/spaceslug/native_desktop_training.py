@@ -91,6 +91,8 @@ def run_native_training(
     stopped = "steps"
     device_batch_attempted = False
     device_batch_status = "not-attempted"
+    validation_metrics = {"records": split_counts["validation"], "loss": None, "status": "not-run"}
+    test_metrics = {"records": split_counts["test"], "loss": None, "status": "not-run"}
     try:
         for step in range(1, steps + 1):
             if should_stop and should_stop():
@@ -116,6 +118,7 @@ def run_native_training(
         "checkpoint": str(checkpoint), "backend": "vulkan-radv", "gpu_execution": True,
         "dataset_device_resident": device_batch_status == "ok", "device_batch_attempted": device_batch_attempted,
         "device_batch_status": device_batch_status, "split_record_counts": split_counts,
+        "validation_metrics": validation_metrics, "test_metrics": test_metrics,
     }, sort_keys=True, indent=2) + "\n")
     revision = "sha256:" + hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     # Keep the adapter checkpoint discoverable by the desktop responder.
@@ -128,7 +131,8 @@ def run_native_training(
     metrics = {"initial_train_loss": losses[0] if losses else None, "final_train_loss": losses[-1] if losses else None,
                "stopped_reason": stopped, "steps": len(losses), "gpu_execution": True,
                "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status,
-               "split_record_counts": split_counts}
+               "split_record_counts": split_counts, "validation_metrics": validation_metrics,
+               "test_metrics": test_metrics}
     experiment_file.write_text(json.dumps({"created_at": datetime.now(UTC).isoformat(), "backend": "vulkan-radv",
                                             "metrics": metrics}, sort_keys=True, indent=2) + "\n")
     return {"artifact_revision": revision, "experiment": str(experiment_file), "metrics": metrics,
