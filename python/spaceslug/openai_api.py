@@ -118,6 +118,15 @@ class TinyGpuResponder(ModelResponder):
             raise ValueError("max_new_tokens must be between 1 and 128")
         self.backend = backend
         self.model = model if model is not None else ProjectedTinyAttentionModel(259, 64)
+        if isinstance(adapter_state, list) and len(adapter_state) == 8:
+            names = ("query", "key", "value", "output")
+            matrices = {}
+            for index, name in enumerate(names):
+                a = adapter_state[index * 2]
+                b = adapter_state[index * 2 + 1]
+                matrices[name] = {"A": [a[row * 4:(row + 1) * 4] for row in range(64)],
+                                  "B": [b[row * 64:(row + 1) * 64] for row in range(4)]}
+            adapter_state = {"hidden_size": 64, "rank": 4, "alpha": 4.0, "matrices": matrices}
         self.adapter = TinyLoRAAdapter.from_state_dict(adapter_state) if adapter_state else None
         self.tokenizer = tokenizer if tokenizer is not None else default_tokenizer()
         self.max_echo_chars = max_echo_chars
