@@ -261,6 +261,44 @@ class RuntimePlacementTest(unittest.TestCase):
                 parse_api_address(bad)
 
 
+class RunDesktopProbeRegressionTest(unittest.TestCase):
+    def test_backend_probe_factory_returns_callable_mapping_to_gpu_primary(self):
+        from unittest import mock
+
+        from spaceslug.desktop.app import runtime_probe_factory
+
+        calls = []
+
+        def fake_backend_probe(runtime_root, runtime_revision):
+            calls.append((runtime_root, runtime_revision))
+            return {
+                "backend": "spaceslug",
+                "device": "AMD Radeon RX 580",
+                "runtime_revision": runtime_revision,
+                "operations": ["sgemm", "tiny_forward_abi"],
+                "software_vulkan": False,
+            }
+
+        # Keep the patch active through the deferred probe call: the factory only
+        # binds the callable, while ``refresh_runtime`` invokes it later.
+        with mock.patch("spaceslug.desktop.runtime.backend_runtime_probe", fake_backend_probe):
+            probe = runtime_probe_factory("/tmp/fake-runtime-root", "rev-123")
+
+            # The controller contract is a callable, never a pre-computed dict.
+            self.assertTrue(callable(probe))
+            self.assertNotIsInstance(probe, dict)
+
+            controller = DesktopController(runtime_probe=probe)
+            placement = controller.refresh_runtime()
+
+        self.assertEqual(calls, [("/tmp/fake-runtime-root", "rev-123")])
+
+        self.assertEqual(placement.mode, "gpu-primary")
+        self.assertTrue(placement.gpu_primary)
+        self.assertTrue(placement.cpu_fallback)
+        self.assertEqual(controller.snapshot()["placement"]["device"], "AMD Radeon RX 580")
+
+
 def _display_available() -> bool:
     if sys.platform == "win32":
         return True

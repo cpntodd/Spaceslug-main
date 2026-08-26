@@ -12,6 +12,7 @@ through the same controller.
 from __future__ import annotations
 
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import filedialog, ttk
 from typing import Any
 
@@ -473,11 +474,32 @@ class DesktopApp:
         self.root.mainloop()
 
 
+def runtime_probe_factory(
+    runtime_root: str | None = None, runtime_revision: str = "runtime"
+) -> Callable[[], dict[str, Any]]:
+    """Return a deferred probe callable for :class:`DesktopController`.
+
+    ``backend_runtime_probe`` returns a snapshot dict, but the controller
+    expects a zero-argument callable so placement is resolved lazily on
+    ``refresh_runtime`` rather than eagerly at construction time.
+    """
+    from . import runtime
+
+    root = runtime_root or runtime.RUNTIME_ROOT
+
+    def probe() -> dict[str, Any]:
+        return runtime.backend_runtime_probe(root, runtime_revision)
+
+    return probe
+
+
 def run_desktop(runtime_root: str | None = None, runtime_revision: str = "runtime") -> int:
     """Build and run the desktop shell against a real (but safe) backend probe."""
-    from .runtime import RUNTIME_ROOT, backend_runtime_probe
-
-    probe = backend_runtime_probe(runtime_root or RUNTIME_ROOT, runtime_revision)
-    app = DesktopApp(controller=DesktopController(runtime_probe=probe, code_revision=detect_code_revision()))
+    app = DesktopApp(
+        controller=DesktopController(
+            runtime_probe=runtime_probe_factory(runtime_root, runtime_revision),
+            code_revision=detect_code_revision(),
+        )
+    )
     app.run()
     return 0
