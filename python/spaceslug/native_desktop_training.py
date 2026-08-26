@@ -140,8 +140,10 @@ def run_native_training(
         # weights or label train loss as validation/test loss.
         if validation_windows:
             validation_metrics["status"] = "unsupported-readonly-graph"
+            validation_metrics["windows"] = len(validation_windows)
         if test_windows:
             test_metrics["status"] = "unsupported-readonly-graph"
+            test_metrics["windows"] = len(test_windows)
         checkpoint = Path(checkpoint); checkpoint.parent.mkdir(parents=True, exist_ok=True)
         trainer.checkpoint(checkpoint)
     finally:
