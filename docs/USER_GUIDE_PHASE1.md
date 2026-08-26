@@ -11,16 +11,18 @@
 > OpenAI-compatible service (`python/spaceslug/openai_api.py`), and the headless
 > ingestion/workspace service with its approval and SearXNG policy
 > (`python/spaceslug/workspace.py`) are committed and wired into the desktop.
-> Remaining boundaries — PDF text extraction, CPU-only Phase 1 training, the
-> non-generative chat responder, and non-streaming API — are surfaced in the app
-> and recorded here. See [`STAGED_ROADMAP.md`](STAGED_ROADMAP.md) for the
+> Remaining boundaries — CPU-only Phase 1 training, the non-generative chat
+> responder, and non-streaming API — are surfaced in the app and recorded here.
+> PDF text extraction is now implemented in the headless workspace service via
+> the local `pdftotext` executable; only the desktop file picker has not yet been
+> expanded to list `.pdf`. See [`STAGED_ROADMAP.md`](STAGED_ROADMAP.md) for the
 > authoritative fixed Tiny boundaries.
 
 ## What this guide covers
 
 1. [Launching the desktop app](#1-launching-the-desktop-app)
 2. [The Tkinter non-browser app](#2-the-tkinter-non-browser-app)
-3. [Local files: `.txt`, `.md`, `.jsonl`](#3-local-files-txt-md-jsonl)
+3. [Local files: `.txt`, `.md`, `.jsonl`, `.pdf`](#3-local-files-txt-md-jsonl-pdf)
 4. [Approved URLs and SearXNG policy](#4-approved-urls-and-searxng-policy)
 5. [GPU-primary with explicit fallback](#5-gpu-primary-with-explicit-fallback)
 6. [The live loss worm](#6-the-live-loss-worm)
@@ -87,31 +89,46 @@ Each tab also shows its **capability boundary as read-only text**, assembled
 from the live module capability metadata, so the boundary is surfaced to the
 user instead of hidden.
 
-## 3. Local files: `.txt`, `.md`, `.jsonl`
+## 3. Local files: `.txt`, `.md`, `.jsonl`, `.pdf`
 
-The desktop imports **local text documents** for dataset building and chat
-context. Phase 1 imports these formats:
+The desktop imports **local documents** for dataset building and chat context.
+Phase 1 imports these formats:
 
 | Format | Status |
 |---|---|
 | `.txt` | Imported as text. |
 | `.md`  | Imported as markdown text. |
 | `.jsonl` | Imported; each JSONL line becomes one record. |
+| `.pdf` | Converted to text with the local `pdftotext` executable. |
 
 Details:
 
-- **Text-first.** These are already text and can be tokenized directly.
-- **PDF is not importable yet.** The underlying file picker can select `.pdf`
-  files, but PDF-to-text extraction is not implemented, so the desktop's local
-  source chooser is `.txt`/`.md`/`.jsonl` only. This is a recorded limitation,
-  not a hidden one.
+- **Text-first.** `.txt`/`.md`/`.jsonl` are already text and can be tokenized
+  directly.
+- **PDF uses local `pdftotext`.** PDF ingestion is implemented in the headless
+  workspace service. Raw PDF bytes are staged to a temporary file and converted
+  to plain text by the local `pdftotext` executable (from `poppler-utils`) — no
+  cloud service and no third-party Python PDF library is involved. The extracted
+  text becomes a single `text` record; the original bytes are preserved
+  content-addressed (SHA-256), and the extracted text is what flows into the
+  `.dts` bundle.
+- **PDF errors fail closed.** If `pdftotext` is not on `PATH`, import raises
+  `PDFToolMissingError` (install `poppler-utils`). If the tool exits non-zero,
+  produces no output file, or yields no text, import raises
+  `PDFExtractionError`. PDFs obey the same limits as other local sources: over
+  16 MB raises `ContentTooLargeError`, a missing license confirmation raises
+  `LicenseRequiredError`, and invalid UTF-8 in the extracted text fails closed.
+- **Desktop wiring.** The desktop's "Choose…" picker still lists
+  `.txt`/`.md`/`.jsonl` only, but the "Import local" action accepts a `.pdf`
+  path, so a PDF is imported through the same `pdftotext`-based service when the
+  tool is installed.
 - **Ingestion stays local and inspectable.** The workspace service reads local
   files with a per-file size limit, stages them content-addressed (SHA-256),
   requires a license confirmation before ingest, and builds a deterministic,
   versioned dataset bundle (`.dts`) with lineage and checksums. See
   [`DATASETS.md`](DATASETS.md) and [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md).
 - **Reproducibility over filenames.** A dataset is identified by content hash and
-  lineage, not by a mutable filename. Raw text is not silently replaced by
+  lineage, not by a mutable filename. Raw bytes are not silently replaced by
   summaries or truncation; invalid UTF-8 fails closed.
 
 ## 4. Approved URLs and SearXNG policy
@@ -224,12 +241,15 @@ Committed and wired: the Tkinter desktop shell with its `spaceslug desktop`
 entry point, the five-tab workflow (import → `.dts` → train → chat → local API),
 the canvas loss worm fed live by the training worker thread, the GPU-primary
 requested/actual placement status, the loopback OpenAI-compatible server, and
-the headless workspace/ingestion service with its approval + SearXNG policy.
+the headless workspace/ingestion service with its approval + SearXNG policy and
+local `pdftotext`-based PDF extraction.
 
 Remaining boundaries (all surfaced in the app, none hidden):
 
-- **PDF text extraction** is not implemented — `.pdf` files are selectable by
-  the underlying picker but not importable as text yet.
+- **PDF in the desktop picker.** PDF text extraction is implemented in the
+  headless workspace service via local `pdftotext`, but the desktop's file
+  chooser still lists `.txt`/`.md`/`.jsonl` only; a `.pdf` path is imported by
+  entering it directly.
 - **Training is CPU-only in Phase 1.** Dataset-integrated GPU training is not
   available; requesting `gpu-primary` records the intent but the actual
   placement resolves to `cpu-fallback`.
