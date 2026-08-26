@@ -469,8 +469,8 @@ class DesktopApp:
             return
         self._set_label(
             self._datasets_status,
-            f"created .dts {bundle.root} (revision={bundle.manifest['revision']}, "
-            f"records={bundle.manifest['record_count']})",
+            f"created/ready .dts {bundle.root} (revision={bundle.manifest['revision']}, "
+            f"records={bundle.manifest['record_count']}); Build & Train can now use this dataset",
         )
         self.refresh()
 

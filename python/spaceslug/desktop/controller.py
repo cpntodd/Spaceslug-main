@@ -527,11 +527,18 @@ class DesktopController:
 
     # -- .dts creation -------------------------------------------------------
     def create_dataset(self, dataset_id: str | None = None, *, split: str = "train") -> Any:
-        bundle = self._workspace_service().create_dataset(
-            dataset_id if dataset_id is not None else self.dataset_id,
-            self.imports,
-            split=split,
-        )
+        """Create or reuse the named canonical bundle and update training state.
+
+        Dataset IDs map to immutable bundle paths. Repeated clicks therefore reuse
+        a verified existing bundle instead of leaving the controller with no
+        ``created_bundle`` after a ``FileExistsError``.
+        """
+        name = dataset_id if dataset_id is not None else self.dataset_id
+        output = self._workspace_service().bundles_dir / f"{name}.dts"
+        if output.exists():
+            bundle = verify_bundle(output)
+        else:
+            bundle = self._workspace_service().create_dataset(name, self.imports, split=split)
         self.created_bundle = str(bundle.root)
         self.dataset_revision = bundle.manifest["revision"]
         return bundle
@@ -541,11 +548,14 @@ class DesktopController:
         if not self.created_bundle:
             raise IngestionError("create a .dts from imported sources before training")
         output = self._workspace_service().bundles_dir / f"{Path(self.created_bundle).name}-train.dts"
-        bundle = build_training_bundle(
-            verify_bundle(self.created_bundle),
-            output,
-            prompt=self.training_prompt if prompt is None else prompt,
-        )
+        if output.exists():
+            bundle = verify_bundle(output)
+        else:
+            bundle = build_training_bundle(
+                verify_bundle(self.created_bundle),
+                output,
+                prompt=self.training_prompt if prompt is None else prompt,
+            )
         self.training_bundle_path = str(bundle.root)
         return bundle
 
@@ -579,7 +589,12 @@ class DesktopController:
         if self.training_bundle_path:
             return Path(self.training_bundle_path)
         if self.created_bundle:
-            self.build_training_bundle()
+            try:
+                self.build_training_bundle()
+            except FileExistsError:
+                candidate = self._workspace_service().bundles_dir / f"{Path(self.created_bundle).name}-train.dts"
+                verify_bundle(candidate)
+                self.training_bundle_path = str(candidate)
             return Path(self.training_bundle_path)
         raise IngestionError("no dataset bundle available for training")
 
