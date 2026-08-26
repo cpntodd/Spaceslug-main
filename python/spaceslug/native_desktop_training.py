@@ -115,6 +115,9 @@ def run_native_training(
                     device_batch = {"status": "unsupported", "reason": f"{type(exc).__name__}: {exc}"}
                 device_batch_status = str(device_batch.get("status", "unknown"))
                 device_batch_reason = str(device_batch.get("reason", device_batch_status))
+                if device_batch_status == "ok" and not device_batch.get("gpu_execution", False):
+                    device_batch_status = "unsupported"
+                    device_batch_reason = "full batch result did not confirm GPU execution"
                 if device_batch_status == "ok":
                     outcome = {"loss": [float(device_batch.get("loss", 0.0))], "gpu_execution": True}
                 else:
