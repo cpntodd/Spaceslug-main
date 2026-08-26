@@ -106,12 +106,11 @@ def training_capability_text() -> str:
 
 def chat_capability_text() -> str:
     return (
-        "Interact uses the injected responder (default: the CPU Tiny attention echo "
-        "responder, spaceslug.openai_api.TinyCpuEchoResponder): a deterministic, "
-        "non-generative, echo-safe CPU reference that reports a single argmax "
-        "next-token prediction and truthfully names its backend (cpu-tiny) and model "
-        "(spaceslug-tiny-attention-v1). It never fabricates natural-language "
-        "completions, and streaming is not supported."
+        "Interact starts an embedded responder at desktop launch. It uses the configured "
+        "Vulkan Tiny forward path (vulkan-radv-tiny) when the fixed V=259,H=64 native "
+        "contract is available, and transparently reports a CPU Tiny reference fallback "
+        "when GPU initialization is unavailable. Both paths are deterministic, "
+        "non-generative, echo-safe single argmax next-token references; streaming is not supported."
     )
 
 
