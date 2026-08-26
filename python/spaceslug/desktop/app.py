@@ -259,6 +259,12 @@ class DesktopApp:
         self._variable("dataset_id", self.controller.dataset_id, self.controller.set_dataset_id)
         ttk.Entry(row, textvariable=self._vars["dataset_id"]).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Create .dts", command=self._create_dataset).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="Import dataset (.dts)…", command=self._import_dataset).pack(side="left", padx=(6, 0))
+        self._dataset_bundle_var = tk.StringVar()
+        bundles = ttk.Combobox(bundle_box, textvariable=self._dataset_bundle_var, state="readonly")
+        bundles.pack(fill="x", pady=(6, 0))
+        bundles.bind("<<ComboboxSelected>>", self._select_dataset_bundle)
+        self._dataset_bundle_combo = bundles
 
         sources_box = ttk.LabelFrame(frame, text="Imported documents and information sources", padding=6)
         sources_box.pack(fill="both", expand=True, pady=6)
@@ -461,6 +467,32 @@ class DesktopApp:
         self._set_label(self._datasets_status, f"imported selected URL sha256={imported.sha256}")
         self.refresh()
 
+    def _import_dataset(self) -> None:
+        path = filedialog.askopenfilename(title="Import dataset bundle", filetypes=[("Dataset bundles", "*.dts")])
+        if not path:
+            return
+        try:
+            bundle = self.controller.import_dataset_bundle(path)
+        except Exception as exc:
+            self._set_label(self._datasets_status, f"import dataset failed: {type(exc).__name__}: {exc}")
+            return
+        self._set_label(self._datasets_status, f"loaded dataset {bundle.root}; Build & Train can now use it")
+        self.refresh()
+
+    def _select_dataset_bundle(self, _event=None) -> None:
+        path = self._dataset_bundle_var.get()
+        if path:
+            self._import_dataset_path(path)
+
+    def _import_dataset_path(self, path: str) -> None:
+        try:
+            bundle = self.controller.import_dataset_bundle(path)
+        except Exception as exc:
+            self._set_label(self._datasets_status, f"load dataset failed: {type(exc).__name__}: {exc}")
+            return
+        self._set_label(self._datasets_status, f"loaded dataset {bundle.root}; Build & Train can now use it")
+        self.refresh()
+
     def _create_dataset(self) -> None:
         try:
             bundle = self.controller.create_dataset()
@@ -630,6 +662,10 @@ class DesktopApp:
             self._source_table.insert(
                 "", "end", values=(row["filename"], row["extension"], row["date_imported"], size)
             )
+        bundle_values = [str(path) for path in self.controller.list_dataset_bundles()]
+        self._dataset_bundle_combo.configure(values=bundle_values)
+        if self.controller.created_bundle in bundle_values:
+            self._dataset_bundle_var.set(self.controller.created_bundle)
         responder = snapshot["responder"]
         self._responder_label.configure(text=f"responder: {responder['backend']} / {responder['model']}")
         profile_id = snapshot["profile"]["model_id"]

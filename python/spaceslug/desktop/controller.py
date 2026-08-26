@@ -526,6 +526,27 @@ class DesktopController:
         )
 
     # -- .dts creation -------------------------------------------------------
+    def list_dataset_bundles(self) -> list[Path]:
+        """Return verified canonical .dts bundles in the configured dataset dir."""
+        result: list[Path] = []
+        for path in sorted(self.paths.dataset_dir.glob("*.dts")):
+            try:
+                verify_bundle(path)
+            except Exception:
+                continue
+            result.append(path)
+        return result
+
+    def import_dataset_bundle(self, path: str | Path) -> Any:
+        """Verify and load an existing canonical or training .dts bundle."""
+        bundle = verify_bundle(path)
+        self.created_bundle = str(bundle.root)
+        self.dataset_id = str(bundle.manifest.get("dataset_id", Path(path).stem))
+        self.dataset_revision = bundle.manifest.get("revision")
+        self.training_bundle_path = str(bundle.root) if bundle.manifest.get("preprocessing", {}).get("pipeline") == "spaceslug-prompt-target" else ""
+        return bundle
+
+    # -- .dts creation -------------------------------------------------------
     def create_dataset(self, dataset_id: str | None = None, *, split: str = "train") -> Any:
         """Create or reuse the named canonical bundle and update training state.
 
