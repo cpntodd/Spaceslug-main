@@ -95,6 +95,7 @@ def run_native_training(
     device_batch_status = "not-attempted"
     validation_metrics = {"records": split_counts["validation"], "loss": None, "status": "not-run"}
     test_metrics = {"records": split_counts["test"], "loss": None, "status": "not-run"}
+    device_batch_reason = "not-attempted"
     validation_windows = _windows(bundle, tokenizer, "validation")
     test_windows = _windows(bundle, tokenizer, "test")
     try:
@@ -108,8 +109,12 @@ def run_native_training(
             # verified GPU graph token path, never the CPU reference trainer.
             if not device_batch_attempted and hasattr(trainer, "train_device_batch"):
                 device_batch_attempted = True
-                device_batch = trainer.train_device_batch(tokens, targets, mask, [0], len(tokens))
+                try:
+                    device_batch = trainer.train_device_batch(tokens, targets, mask, [0], len(tokens))
+                except (AttributeError, NotImplementedError, RuntimeError) as exc:
+                    device_batch = {"status": "unsupported", "reason": f"{type(exc).__name__}: {exc}"}
                 device_batch_status = str(device_batch.get("status", "unknown"))
+                device_batch_reason = str(device_batch.get("reason", device_batch_status))
                 if device_batch_status == "ok":
                     outcome = {"loss": [float(device_batch.get("loss", 0.0))], "gpu_execution": True}
                 else:
@@ -138,7 +143,8 @@ def run_native_training(
         "format": "spaceslug-native-tiny-adapter", "profile": "tiny_h64_v259_vp320_t128_rank4",
         "checkpoint": str(checkpoint), "backend": "vulkan-radv", "gpu_execution": True,
         "dataset_device_resident": device_batch_status == "ok", "device_batch_attempted": device_batch_attempted,
-        "device_batch_status": device_batch_status, "split_record_counts": split_counts,
+        "device_batch_status": device_batch_status, "device_batch_reason": device_batch_reason,
+        "split_record_counts": split_counts,
         "validation_metrics": validation_metrics, "test_metrics": test_metrics,
     }, sort_keys=True, indent=2) + "\n")
     revision = "sha256:" + hashlib.sha256(checkpoint.read_bytes()).hexdigest()
@@ -152,7 +158,7 @@ def run_native_training(
     metrics = {"initial_train_loss": losses[0] if losses else None, "final_train_loss": losses[-1] if losses else None,
                "stopped_reason": stopped, "steps": len(losses), "gpu_execution": True,
                "dataset_device_resident": device_batch_status == "ok", "device_batch_status": device_batch_status,
-               "split_record_counts": split_counts, "validation_metrics": validation_metrics,
+               "device_batch_reason": device_batch_reason, "split_record_counts": split_counts, "validation_metrics": validation_metrics,
                "test_metrics": test_metrics}
     experiment_file.write_text(json.dumps({"created_at": datetime.now(UTC).isoformat(), "backend": "vulkan-radv",
                                             "metrics": metrics}, sort_keys=True, indent=2) + "\n")
