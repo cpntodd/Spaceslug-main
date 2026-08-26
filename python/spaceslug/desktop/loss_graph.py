@@ -15,7 +15,7 @@ from typing import Any
 class LossWormGraph:
     """A bounded ring of loss values that renders as a connected line ("worm")."""
 
-    def __init__(self, history: Sequence[float] | None = None, *, max_points: int = 64) -> None:
+    def __init__(self, history: Sequence[float] | None = None, *, max_points: int = 100000) -> None:
         if max_points <= 0:
             raise ValueError("max_points must be positive")
         self.max_points = max_points

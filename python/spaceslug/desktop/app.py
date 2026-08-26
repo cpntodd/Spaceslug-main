@@ -331,6 +331,9 @@ class DesktopApp:
 
         self._loss_canvas = tk.Canvas(frame, width=_LOSS_CANVAS_WIDTH, height=_LOSS_CANVAS_HEIGHT, background="#0d1117", highlightthickness=0)
         self._loss_canvas.pack(fill="x", pady=4)
+        self._loss_scroll = ttk.Scrollbar(frame, orient="horizontal", command=self._scroll_loss)
+        self._loss_scroll.pack(fill="x")
+        self._loss_view_start = 0
 
         self._gpu_gate_label = self._status_label(frame)
         self._gpu_gate_label.pack(anchor="w", pady=(4, 0))
@@ -647,8 +650,23 @@ class DesktopApp:
         self.refresh()
 
     # -- rendering -----------------------------------------------------------
+    def _scroll_loss(self, *args) -> None:
+        history = self.controller.loss.history
+        window = 120
+        if args and args[0] == "moveto":
+            self._loss_view_start = int(float(args[1]) * max(0, len(history) - window))
+        elif args and args[0] == "scroll":
+            self._loss_view_start = max(0, self._loss_view_start + int(args[1]) * 10)
+        self._redraw_loss()
+
     def _redraw_loss(self) -> None:
-        self.controller.loss.draw(self._loss_canvas, _LOSS_CANVAS_WIDTH, _LOSS_CANVAS_HEIGHT)
+        history = self.controller.loss.history
+        window = 120
+        if len(history) > window and self.controller.training_status()["state"] == "running":
+            self._loss_view_start = len(history) - window
+        self.controller.loss.draw(self._loss_canvas, _LOSS_CANVAS_WIDTH, _LOSS_CANVAS_HEIGHT, start=self._loss_view_start, count=window)
+        total = max(1, len(history) - window)
+        self._loss_scroll.set(self._loss_view_start / total, min(1.0, (self._loss_view_start + window) / max(window, len(history))))
 
     def refresh(self) -> None:
         self.controller.refresh_gpu_readiness_if_needed()
