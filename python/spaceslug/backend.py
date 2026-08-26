@@ -890,6 +890,18 @@ class BackendSession:
         if code != 0:
             raise BackendError(f"device dataset LM-head SGD returned {code}")
 
+    def train_tiny_dataset_batch(self, graph: ctypes.c_void_p, batch: ctypes.c_void_p, learning_rate: float, normalizer: float = 1.0) -> dict[str, Any]:
+        """Attempt the complete device batch graph, fail closed if unsupported."""
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_dataset_batch_full", None)
+        if fn is None:
+            return {"status": "unsupported", "gpu_execution": False, "reason": "full device dataset graph ABI unavailable"}
+        if learning_rate <= 0.0 or normalizer <= 0.0:
+            raise ValueError("learning_rate and normalizer must be positive")
+        code = fn(graph, batch, learning_rate, normalizer)
+        if code != 0:
+            raise BackendError(f"full device dataset graph returned {code}")
+        return {"status": "ok", "gpu_execution": True, "device_resident": True}
+
     def close_tiny_dataset_batch(self, batch: ctypes.c_void_p) -> None:
         fn = getattr(self._native(), "spaceslug_tiny_forward_destroy_dataset_batch", None)
         if fn is None:
