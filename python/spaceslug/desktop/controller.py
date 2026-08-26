@@ -759,6 +759,16 @@ class DesktopController:
                 checkpoint=paths.checkpoint, artifact=paths.artifact, experiment=paths.experiment,
                 on_step=self._on_training_step, should_stop=self._cancel_event.is_set,
             )
+            # Make the completed native adapter the default Interact model. The
+            # Vulkan graph is recreated with the trained adapter; no CPU copy is
+            # used for inference unless this reload fails.
+            try:
+                checkpoint_data = json.loads(paths.checkpoint.read_text(encoding="utf-8"))
+                if self._gpu_inference_backend is not None and checkpoint_data.get("adapter"):
+                    self.responder = TinyGpuResponder(self._gpu_inference_backend, adapter_state=checkpoint_data["adapter"])
+                    self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "trained native adapter loaded"}
+            except Exception as exc:
+                self.inference_status = {"backend": "vulkan-radv-tiny", "ready": False, "reason": f"trained adapter reload failed: {type(exc).__name__}: {exc}"}
             self._training_state = "finished"
         except BaseException as exc:
             self._training_error = exc
