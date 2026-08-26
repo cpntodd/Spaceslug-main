@@ -67,6 +67,41 @@ class DesktopApp:
     def _set_label(self, label: ttk.Label, text: str) -> None:
         label.configure(text=text)
 
+    def _path_row(self, parent: tk.Widget, key: str, label: str, *, browse: bool = False) -> None:
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text=label, width=18, anchor="w").pack(side="left")
+        self._variable(key, str(getattr(self.controller.paths, key)))
+        ttk.Entry(row, textvariable=self._vars[key]).pack(side="left", fill="x", expand=True)
+        if browse:
+            ttk.Button(row, text="Browse…", command=lambda k=key: self._browse_path(k)).pack(side="left", padx=(6, 0))
+
+    def _browse_path(self, key: str) -> None:
+        path = filedialog.askdirectory(title=f"Choose {key.replace('_', ' ')}")
+        if path:
+            self._vars[key].set(path)
+
+    def _sync_path_entries(self) -> None:
+        for key in ("workspace_root", "dataset_dir", "checkpoint_dir", "artifact_dir", "experiment_dir", "temp_dir"):
+            self._vars[key].set(str(getattr(self.controller.paths, key)))
+
+    def _apply_workspace_paths(self) -> None:
+        try:
+            self.controller.set_workspace_paths(
+                workspace_root=self._vars["workspace_root"].get(),
+                dataset_dir=self._vars["dataset_dir"].get(),
+                checkpoint_dir=self._vars["checkpoint_dir"].get(),
+                artifact_dir=self._vars["artifact_dir"].get(),
+                experiment_dir=self._vars["experiment_dir"].get(),
+                temp_dir=self._vars["temp_dir"].get(),
+            )
+        except Exception as exc:  # surfaced to the user, never silent
+            self._set_label(self._workspace_status, f"failed to save paths: {type(exc).__name__}: {exc}")
+            return
+        self._sync_path_entries()
+        self._set_label(self._workspace_status, f"saved workspace paths to {self.controller.config_path}")
+        self.refresh()
+
     def _build(self) -> None:
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True, padx=6, pady=6)
@@ -99,6 +134,23 @@ class DesktopApp:
             label = ttk.Label(profile_box, text=line, anchor="w")
             label.pack(fill="x")
             self._profile_labels.append(label)
+
+        workspace_box = ttk.LabelFrame(frame, text="Workspace paths (persisted)", padding=8)
+        workspace_box.pack(fill="x", pady=4)
+        for key, label in (
+            ("workspace_root", "Workspace root:"),
+            ("dataset_dir", "Dataset dir:"),
+            ("checkpoint_dir", "Checkpoint dir:"),
+            ("artifact_dir", "Artifact dir:"),
+            ("experiment_dir", "Experiment dir:"),
+            ("temp_dir", "Temp dir:"),
+        ):
+            self._path_row(workspace_box, key, label, browse=(key == "workspace_root"))
+        apply_row = ttk.Frame(workspace_box)
+        apply_row.pack(fill="x", pady=(6, 0))
+        ttk.Button(apply_row, text="Apply & save paths", command=self._apply_workspace_paths).pack(side="left")
+        self._workspace_status = self._status_label(workspace_box)
+        self._set_label(self._workspace_status, f"config: {self.controller.config_path}")
 
         placement_box = ttk.LabelFrame(frame, text="GPU-primary / CPU fallback status", padding=8)
         placement_box.pack(fill="x", pady=4)
@@ -180,6 +232,25 @@ class DesktopApp:
     def _build_training(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook, padding=10)
         ttk.Label(frame, text="Build & Train", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+
+        tiny_box = ttk.LabelFrame(frame, text="Fixed Tiny settings (rank 4/8, native groups)", padding=6)
+        tiny_box.pack(fill="x", pady=(8, 4))
+        rank_row = ttk.Frame(tiny_box)
+        rank_row.pack(fill="x")
+        ttk.Label(rank_row, text="LoRA rank:").pack(side="left")
+        self._rank_var = tk.IntVar(value=self.controller.training_rank)
+        for rank in (4, 8):
+            ttk.Radiobutton(
+                rank_row, text=str(rank), value=rank, variable=self._rank_var, command=self._on_rank
+            ).pack(side="left", padx=(6, 0))
+        self._native_groups_label = ttk.Label(
+            tiny_box,
+            text=self.controller.native_training_groups_text(),
+            anchor="w",
+            justify="left",
+            foreground="#555",
+        )
+        self._native_groups_label.pack(fill="x", pady=(4, 0))
 
         controls = ttk.Frame(frame)
         controls.pack(fill="x", pady=(8, 4))
@@ -342,6 +413,13 @@ class DesktopApp:
         except ValueError:
             pass
 
+    def _on_rank(self) -> None:
+        try:
+            self.controller.set_training_rank(self._rank_var.get())
+        except ValueError:
+            pass
+        self.refresh()
+
     def _start_training(self) -> None:
         try:
             self.controller.start_training()
@@ -377,6 +455,7 @@ class DesktopApp:
         placement = status["placement"]
         lines = [
             f"state: {status['state']} · completed_steps: {status['completed_steps']}",
+            f"tiny_profile: {status['tiny_profile']} · rank: {status['rank']}",
             f"requested: {placement['requested']} · actual: {placement['actual']} · hardware: {placement['hardware']}",
             placement["reason"],
         ]

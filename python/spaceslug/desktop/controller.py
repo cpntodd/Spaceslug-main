@@ -20,7 +20,7 @@ import subprocess
 import threading
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,11 +44,13 @@ from .capabilities import (
     api_capability_text,
     chat_capability_text,
     datasets_capability_text,
+    native_training_groups,
+    native_training_groups_text,
     structured_capabilities,
     training_capability_text,
 )
 from .loss_graph import LossWormGraph
-from .profile import fixed_tiny_profile
+from .profile import fixed_tiny_profile, tiny_profile_id
 from .runtime import (
     RuntimePlacement,
     TrainingPlacement,
@@ -56,10 +58,17 @@ from .runtime import (
     resolve_placement,
     resolve_training_placement,
 )
+from .settings import (
+    DEFAULT_CONFIG_PATH,
+    WorkspacePaths,
+    coerce_path,
+    default_workspace_paths,
+    load_workspace_paths,
+    save_workspace_paths,
+)
 
 TAB_NAMES = ("Home", "Datasets", "Build & Train", "Interact", "Local API")
 
-DEFAULT_WORKSPACE_ROOT = Path.home() / ".spaceslug" / "workspace"
 DEFAULT_SEARXNG_BASE_URL = "http://127.0.0.1:8888"
 DEFAULT_API_ADDRESS = "127.0.0.1:8123"
 LOCAL_SOURCE_EXTENSIONS = (".txt", ".md", ".jsonl", ".pdf")
@@ -138,6 +147,7 @@ class DesktopController:
         history: Sequence[float] | None = None,
         workspace: WorkspaceService | None = None,
         workspace_root: str | Path | None = None,
+        config_path: str | Path | None = None,
         responder: ModelResponder | None = None,
         code_revision: str | None = None,
     ) -> None:
@@ -156,8 +166,15 @@ class DesktopController:
         )
         self.gpu_primary_requested = True
 
+        # Persisted workspace paths. An explicit workspace_root wins over any
+        # persisted config so callers (and tests) stay deterministic.
+        self.config_path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+        if workspace_root is not None:
+            self.paths = default_workspace_paths(workspace_root)
+        else:
+            self.paths = load_workspace_paths(self.config_path)
+        self.workspace_root = self.paths.workspace_root
         # Workspace service (lazily constructed; injectable for tests).
-        self.workspace_root = Path(workspace_root) if workspace_root else DEFAULT_WORKSPACE_ROOT
         self._workspace = workspace
 
         # Responder shared by chat and the local API server.
@@ -183,6 +200,7 @@ class DesktopController:
         self.training_steps = 10
         self.training_learning_rate = 0.2
         self.training_batch_size = 1
+        self.training_rank = 4
         self.training_prompt = ""
         self.latest_loss: float | None = None
         self.completed_steps = 0
@@ -231,8 +249,94 @@ class DesktopController:
     # -- workspace -----------------------------------------------------------
     def _workspace_service(self) -> WorkspaceService:
         if self._workspace is None:
-            self._workspace = WorkspaceService(self.workspace_root)
+            self._workspace = WorkspaceService(
+                self.paths.workspace_root,
+                bundles_dir=self.paths.dataset_dir,
+                temp_dir=self.paths.temp_dir,
+            )
         return self._workspace
+
+    def _persist_paths(self) -> Path:
+        return save_workspace_paths(self.paths, self.config_path)
+
+    def _apply_paths(self, paths: WorkspacePaths, *, reset_imports: bool, reset_bundles: bool) -> None:
+        self.paths = paths
+        self.workspace_root = paths.workspace_root
+        self._workspace = None
+        if reset_imports:
+            self.imports = []
+            self.last_import = None
+            self.search_results = []
+            self.selected_search_result = None
+        if reset_bundles:
+            self.created_bundle = ""
+            self.dataset_revision = None
+            self.training_bundle_path = ""
+        self._persist_paths()
+
+    def set_workspace_paths(
+        self,
+        *,
+        workspace_root: str | Path | None = None,
+        dataset_dir: str | Path | None = None,
+        checkpoint_dir: str | Path | None = None,
+        artifact_dir: str | Path | None = None,
+        experiment_dir: str | Path | None = None,
+        temp_dir: str | Path | None = None,
+    ) -> WorkspacePaths:
+        """Update persisted paths; a new workspace root re-derives its subdirs."""
+        if workspace_root is not None:
+            root = coerce_path(workspace_root)
+            paths = default_workspace_paths(root)
+            overrides = {
+                "dataset_dir": dataset_dir,
+                "checkpoint_dir": checkpoint_dir,
+                "artifact_dir": artifact_dir,
+                "experiment_dir": experiment_dir,
+                "temp_dir": temp_dir,
+            }
+            for field, value in overrides.items():
+                if value is not None:
+                    paths = replace(paths, **{field: coerce_path(value)})
+            self._apply_paths(paths, reset_imports=True, reset_bundles=True)
+            return self.paths
+        overrides = {
+            "dataset_dir": dataset_dir,
+            "checkpoint_dir": checkpoint_dir,
+            "artifact_dir": artifact_dir,
+            "experiment_dir": experiment_dir,
+            "temp_dir": temp_dir,
+        }
+        if not any(value is not None for value in overrides.values()):
+            return self.paths
+        paths = replace(
+            self.paths,
+            **{field: coerce_path(value) for field, value in overrides.items() if value is not None},
+        )
+        self._apply_paths(
+            paths,
+            reset_imports=False,
+            reset_bundles=dataset_dir is not None,
+        )
+        return self.paths
+
+    def set_workspace_root(self, value: str | Path) -> WorkspacePaths:
+        return self.set_workspace_paths(workspace_root=value)
+
+    def set_dataset_dir(self, value: str | Path) -> WorkspacePaths:
+        return self.set_workspace_paths(dataset_dir=value)
+
+    def set_checkpoint_dir(self, value: str | Path) -> WorkspacePaths:
+        return self.set_workspace_paths(checkpoint_dir=value)
+
+    def set_artifact_dir(self, value: str | Path) -> WorkspacePaths:
+        return self.set_workspace_paths(artifact_dir=value)
+
+    def set_experiment_dir(self, value: str | Path) -> WorkspacePaths:
+        return self.set_workspace_paths(experiment_dir=value)
+
+    def set_temp_dir(self, value: str | Path) -> WorkspacePaths:
+        return self.set_workspace_paths(temp_dir=value)
 
     def _resolve_license(self, license: str | None) -> str:
         return license if license is not None else self.dataset_license
@@ -353,6 +457,11 @@ class DesktopController:
             raise ValueError("batch_size must be positive")
         self.training_batch_size = value
 
+    def set_training_rank(self, rank: int) -> None:
+        if isinstance(rank, bool) or not isinstance(rank, int) or rank not in (4, 8):
+            raise ValueError(f"rank must be 4 or 8, got {rank!r}")
+        self.training_rank = rank
+
     def set_training_prompt(self, value: str) -> None:
         self.training_prompt = value
 
@@ -373,10 +482,9 @@ class DesktopController:
         experiment: str | Path | None,
     ) -> TrainingJobPaths:
         run_id = f"run-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
-        root = self._workspace_service().root
-        checkpoint_path = Path(checkpoint) if checkpoint is not None else root / "checkpoints" / f"{run_id}.json"
-        artifact_path = Path(artifact) if artifact is not None else root / "artifacts" / f"{run_id}.spaceslug"
-        experiment_path = Path(experiment) if experiment is not None else root / "experiments" / run_id
+        checkpoint_path = Path(checkpoint) if checkpoint is not None else self.paths.checkpoint_dir / f"{run_id}.json"
+        artifact_path = Path(artifact) if artifact is not None else self.paths.artifact_dir / f"{run_id}.spaceslug"
+        experiment_path = Path(experiment) if experiment is not None else self.paths.experiment_dir / run_id
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         experiment_path.parent.mkdir(parents=True, exist_ok=True)
@@ -401,6 +509,7 @@ class DesktopController:
             steps=self.training_steps if steps is None else steps,
             learning_rate=self.training_learning_rate if learning_rate is None else learning_rate,
             batch_size=self.training_batch_size if batch_size is None else batch_size,
+            rank=self.training_rank,
         )
         paths = self._resolve_training_paths(checkpoint, artifact, experiment)
         self._training_paths = paths
@@ -474,6 +583,8 @@ class DesktopController:
             "completed_steps": self.completed_steps,
             "latest_loss": self.latest_loss,
             "loss_history": self.loss.history,
+            "rank": self.training_rank,
+            "tiny_profile": tiny_profile_id(self.training_rank),
             "placement": self.training_placement().to_dict(),
             "paths": None,
             "result": None,
@@ -563,6 +674,12 @@ class DesktopController:
     def capabilities(self) -> dict[str, Any]:
         return structured_capabilities()
 
+    def native_training_groups(self) -> dict[str, Any]:
+        return native_training_groups()
+
+    def native_training_groups_text(self) -> str:
+        return native_training_groups_text()
+
     # -- pure read model -----------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
         """Return a render-ready view without probing, training, or model work."""
@@ -573,6 +690,9 @@ class DesktopController:
             "training_placement": self.training_placement().to_dict(),
             "gpu_primary_requested": self.gpu_primary_requested,
             "loss_history": self.loss.history,
+            "workspace_root": str(self.paths.workspace_root),
+            "config_path": str(self.config_path),
+            "workspace_paths": self.paths.to_dict(),
             "dataset_file": self.dataset_file,
             "dataset_url": self.dataset_url,
             "dataset_search": self.dataset_search,
@@ -588,6 +708,7 @@ class DesktopController:
             "training_steps": self.training_steps,
             "training_learning_rate": self.training_learning_rate,
             "training_batch_size": self.training_batch_size,
+            "training_rank": self.training_rank,
             "training": self.training_status(),
             "chat_prompt": self.chat_prompt,
             "chat_history": list(self.chat_history),

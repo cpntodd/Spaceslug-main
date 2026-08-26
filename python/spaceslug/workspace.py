@@ -288,18 +288,20 @@ def extract_pdf_text(
     source_id: str,
     *,
     runner: Callable[[Path, Path], None] = run_pdftotext,
+    temp_dir: str | Path | None = None,
 ) -> list[dict]:
     """Extract a single text record from raw PDF *data* using ``pdftotext``.
 
     The raw bytes are staged to a temporary ``.pdf`` file and ``pdftotext``
     writes a temporary text file; both are removed afterwards. The original
     bytes are never modified. Fails closed with a clear error when the tool is
-    absent, the run fails, or no text is produced.
+    absent, the run fails, or no text is produced. ``temp_dir`` optionally
+    points staging at a caller-controlled directory instead of the system temp.
     """
-    with tempfile.TemporaryDirectory(prefix="spaceslug-pdf-") as directory:
-        temp_dir = Path(directory)
-        input_path = temp_dir / "source.pdf"
-        output_path = temp_dir / "source.txt"
+    with tempfile.TemporaryDirectory(prefix="spaceslug-pdf-", dir=None if temp_dir is None else str(temp_dir)) as directory:
+        staging = Path(directory)
+        input_path = staging / "source.pdf"
+        output_path = staging / "source.txt"
         input_path.write_bytes(data)
         runner(input_path, output_path)
         if not output_path.is_file():
@@ -316,6 +318,7 @@ def extract_text(
     *,
     source_id: str,
     pdftotext_runner: Callable[[Path, Path], None] = run_pdftotext,
+    temp_dir: str | Path | None = None,
 ) -> list[dict]:
     """Extract basic text records from *data* according to *kind*.
 
@@ -336,7 +339,7 @@ def extract_text(
     if kind == "html":
         return [_record(source_id, 0, "html", _extract_html_text(data))]
     if kind == "pdf":
-        return extract_pdf_text(data, source_id, runner=pdftotext_runner)
+        return extract_pdf_text(data, source_id, runner=pdftotext_runner, temp_dir=temp_dir)
     raise UnsupportedKindError(f"unsupported source kind {kind!r}")
 
 
@@ -474,10 +477,13 @@ class WorkspaceService:
         root: str | Path,
         *,
         pdftotext_runner: Callable[[Path, Path], None] | None = None,
+        bundles_dir: str | Path | None = None,
+        temp_dir: str | Path | None = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.ingest_dir = self.root / "ingest"
-        self.bundles_dir = self.root / "bundles"
+        self.bundles_dir = Path(bundles_dir).expanduser().resolve() if bundles_dir else self.root / "bundles"
+        self._temp_dir = Path(temp_dir).expanduser().resolve() if temp_dir else None
         self.ingest_dir.mkdir(parents=True, exist_ok=True)
         self.bundles_dir.mkdir(parents=True, exist_ok=True)
         self._pdftotext_runner = pdftotext_runner or run_pdftotext
@@ -536,7 +542,7 @@ class WorkspaceService:
         raw_path = record_dir / "raw"
         if not raw_path.exists():
             raw_path.write_bytes(data)
-        records = tuple(extract_text(data, kind, source_id=sha, pdftotext_runner=self._pdftotext_runner))
+        records = tuple(extract_text(data, kind, source_id=sha, pdftotext_runner=self._pdftotext_runner, temp_dir=self._temp_dir))
         imported = ImportedSource(
             source=source,
             sha256=sha,

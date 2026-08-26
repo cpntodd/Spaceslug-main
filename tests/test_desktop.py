@@ -162,17 +162,31 @@ class DesktopControllerTest(unittest.TestCase):
 
 
 class DesktopProfileTest(unittest.TestCase):
-    def test_fixed_tiny_profile(self):
+    def test_fixed_tiny_profile_reports_native_contract(self):
         profile = fixed_tiny_profile()
         self.assertEqual(profile["model_id"], "Spaceslug-Tiny")
         self.assertEqual(profile["hidden_size"], 64)
-        self.assertEqual(profile["lora_rank"], 4)
-        self.assertIn("training_mode", profile)
+        self.assertEqual(profile["vocab_size"], 259)
+        self.assertEqual(profile["projected_vocab_size"], 320)
+        self.assertEqual(profile["sequence_capacity"], 128)
+        self.assertEqual(profile["ranks"], [4, 8])
+        self.assertEqual(profile["dtype"], "fp32")
+        self.assertEqual(profile["optimizers"], ["sgd", "adamw"])
+        self.assertEqual(profile["base_weights"], "frozen")
+        # The fake planning-only fields are gone: the desktop never shows a
+        # 1M-parameter / multi-layer / 512-context estimate.
+        self.assertNotIn("target_parameters", profile)
+        self.assertNotIn("layers", profile)
+        self.assertNotIn("context_length", profile)
+        self.assertNotIn("lora_rank", profile)
 
     def test_profile_lines(self):
         lines = fixed_tiny_profile_lines()
         self.assertTrue(any("Spaceslug-Tiny" in line for line in lines))
-        self.assertTrue(any("hidden_size: 64" in line for line in lines))
+        self.assertTrue(any("hidden_size (H): 64" in line for line in lines))
+        self.assertTrue(any("vocab_size (V): 259" in line for line in lines))
+        self.assertTrue(any("projected_vocab_size (Vp): 320" in line for line in lines))
+        self.assertTrue(any("sequence_capacity (T): 128" in line for line in lines))
 
 
 class LossWormGraphTest(unittest.TestCase):

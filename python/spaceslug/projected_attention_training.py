@@ -29,6 +29,7 @@ class ProjectedAttentionConfig:
     weight_decay: float = 0.0
     max_seconds: float | None = None
     early_stop_patience: int | None = None
+    rank: int | None = None
 
     def validate(self) -> None:
         if self.steps <= 0 or self.learning_rate <= 0.0 or self.batch_size <= 0:
@@ -39,6 +40,8 @@ class ProjectedAttentionConfig:
             raise ValueError("max_seconds must be positive")
         if self.early_stop_patience is not None and self.early_stop_patience <= 0:
             raise ValueError("early_stop_patience must be positive")
+        if self.rank is not None and self.rank not in (4, 8):
+            raise ValueError("rank must be 4 or 8 when provided")
 
 
 def train_projected_attention(bundle: DatasetBundle, config: ProjectedAttentionConfig, *, tokenizer: ByteTokenizer,

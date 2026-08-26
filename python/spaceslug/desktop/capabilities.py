@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..gpu_lora_training import gpu_lora_capability, persistent_tiny_capability
+from ..gpu_lora_training import (
+    gpu_lora_capability,
+    persistent_graph_boundary,
+    persistent_tiny_capability,
+)
 from ..native_training import native_fp32_lm_head_capability
 
 
@@ -45,6 +49,33 @@ def structured_capabilities() -> dict[str, Any]:
             "dataset_training": standalone["dataset_training"],
         },
     }
+
+
+def native_training_groups() -> dict[str, Any]:
+    """Return the native parameter-group and optimizer facts for the display.
+
+    The trainable/frozen groups come from the standalone native FP32 subset
+    contract; the optimizers and base-weights come from the fixed native Tiny
+    contract.  These are facts about the native boundary, not desktop toggles.
+    """
+    standalone = native_fp32_lm_head_capability()
+    contract = persistent_graph_boundary()["contract"]
+    return {
+        "trainable_parameter_groups": list(standalone["trainable_parameter_groups"]),
+        "frozen_parameter_groups": list(standalone["frozen_parameter_groups"]),
+        "optimizers": list(contract["optimizers"]),
+        "base_weights": contract["base_weights"],
+    }
+
+
+def native_training_groups_text() -> str:
+    groups = native_training_groups()
+    return (
+        "trainable: " + ", ".join(groups["trainable_parameter_groups"]) + "\n"
+        "frozen: " + ", ".join(groups["frozen_parameter_groups"]) + "\n"
+        "optimizers: " + ", ".join(groups["optimizers"]) + "\n"
+        "base_weights: " + groups["base_weights"]
+    )
 
 
 def training_capability_text() -> str:
