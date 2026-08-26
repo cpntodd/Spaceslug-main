@@ -159,6 +159,25 @@ class PersistentTinyTrainer:
                 "dataset_device_resident": True, "full_dataset_training": False, "all_parameter_training": False,
                 "metadata": "bounded dataset windows; not full dataset or all-parameter training"}
 
+    def train_device_batch_full(self, tokens: list[int], targets: list[int], masks: list[int], controls: list[int], window_length: int) -> dict[str, Any]:
+        """Invoke the complete device-resident graph, never the LM-head subset."""
+        if not 0 < window_length <= 128 or len(controls) == 0 or len(controls) > 32:
+            raise ValueError("full device dataset training requires 1..32 windows of length 1..128")
+        if len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) != len(controls) * window_length:
+            raise ValueError("full device dataset batch shape mismatch")
+        create = getattr(self.backend, "create_tiny_dataset_batch", None)
+        upload = getattr(self.backend, "upload_tiny_dataset_batch", None)
+        train = getattr(self.backend, "train_tiny_dataset_batch", None)
+        close = getattr(self.backend, "close_tiny_dataset_batch", None)
+        if None in (create, upload, train, close):
+            return {"status": "unsupported", "gpu_execution": False, "reason": "full device dataset graph ABI unavailable"}
+        batch = create(self.handle, len(controls), window_length)
+        try:
+            upload(batch, tokens, targets, masks, controls, len(controls), window_length)
+            return train(self.handle, batch, self.learning_rate, float(sum(masks) or 1))
+        finally:
+            close(batch)
+
     def fixed_scalar_metrics(self, tokens: list[int], targets: list[int], mask: list[int]) -> dict[str, Any]:
         """Read bounded GPU scalar loss/count metrics for exactly 128 rows."""
         if len(tokens) != 128 or len(targets) != 128 or len(mask) != 128:
