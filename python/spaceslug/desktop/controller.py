@@ -249,6 +249,7 @@ class DesktopController:
         self.api_address = DEFAULT_API_ADDRESS
         self._server: OpenAICompatibleServer | None = None
         self._gpu_inference_backend: BackendSession | None = None
+        self._trained_artifact: str | None = None
 
     # -- tabs ----------------------------------------------------------------
     def set_active_tab(self, name: str) -> str:
@@ -768,7 +769,8 @@ class DesktopController:
                 checkpoint_data = json.loads(paths.checkpoint.read_text(encoding="utf-8"))
                 if self._gpu_inference_backend is not None and checkpoint_data.get("adapter"):
                     self.responder = TinyGpuResponder(self._gpu_inference_backend, adapter_state=checkpoint_data["adapter"])
-                    self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "trained native adapter loaded"}
+                    self._trained_artifact = str(paths.artifact)
+                    self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "trained native adapter loaded", "trained_artifact": self._trained_artifact}
             except Exception as exc:
                 self.inference_status = {"backend": "vulkan-radv-tiny", "ready": False, "reason": f"trained adapter reload failed: {type(exc).__name__}: {exc}"}
             self._training_state = "finished"
@@ -902,7 +904,7 @@ class DesktopController:
             backend.capabilities()
             self._gpu_inference_backend = backend
             self.responder = TinyGpuResponder(backend)
-            self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "native Vulkan inference initialized"}
+            self.inference_status = {"backend": self.responder.backend_id, "ready": True, "reason": "native Vulkan inference initialized", "trained_artifact": self._trained_artifact}
         except Exception as exc:
             self.responder = TinyCpuEchoResponder()
             self.inference_status = {"backend": self.responder.backend_id, "ready": False, "reason": f"GPU inference unavailable: {type(exc).__name__}: {exc}"}
