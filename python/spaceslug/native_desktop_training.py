@@ -124,8 +124,12 @@ def run_native_training(
                     outcome = trainer.train_tokens(tokens, targets, mask)
                     device_batch_status = "unsupported-fallback-gpu-graph"
                     device_batch_reason = device_batch_reason or "full device batch unsupported"
+                    if not outcome.get("gpu_execution", False):
+                        raise RuntimeError("native GPU fallback did not confirm gpu_execution")
             else:
                 outcome = trainer.train_tokens(tokens, targets, mask)
+                if not outcome.get("gpu_execution", False):
+                    raise RuntimeError("native GPU training step did not confirm gpu_execution")
             values = [float(value) for value in outcome["loss"]]
             loss = sum(values) / max(1, len(values))
             losses.append(loss)
