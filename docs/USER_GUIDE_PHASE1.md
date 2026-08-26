@@ -79,7 +79,10 @@ What each tab does:
 - **Datasets** — the wired ingestion workflow: individual-file or recursive-folder
   import (`.txt`/`.md`/`.jsonl`/`.pdf`), approved-URL import, SearXNG search and
   result selection, an imported-source table, and `.dts` bundle creation. The
-  table shows filename/source, extension/type, import date, and file size.
+  table shows filename/source, extension/type, import date, and file size. The
+  Dataset bundle section also has **Import dataset (.dts)…** and a dropdown of
+  verified bundles found in the Home-configured dataset directory; selecting or
+  importing one populates the training handoff.
 - **Build & Train** — training controls (steps, learning rate, batch size),
   separate **Start native GPU training** and **Start CPU reference training**
   actions, shared Stop, and the live **loss worm** canvas with a status readout (run id,
