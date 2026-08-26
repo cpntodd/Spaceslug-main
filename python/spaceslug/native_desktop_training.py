@@ -107,10 +107,10 @@ def run_native_training(
             # Probe the complete device-batch ABI once using a bounded batch.
             # Unsupported is an explicit capability result; only then use the
             # verified GPU graph token path, never the CPU reference trainer.
-            if not device_batch_attempted and hasattr(trainer, "train_device_batch"):
+            if not device_batch_attempted and hasattr(trainer, "train_device_batch_full"):
                 device_batch_attempted = True
                 try:
-                    device_batch = trainer.train_device_batch(tokens, targets, mask, [0], len(tokens))
+                    device_batch = trainer.train_device_batch_full(tokens, targets, mask, [0], len(tokens))
                 except (AttributeError, NotImplementedError, RuntimeError) as exc:
                     device_batch = {"status": "unsupported", "reason": f"{type(exc).__name__}: {exc}"}
                 device_batch_status = str(device_batch.get("status", "unknown"))
