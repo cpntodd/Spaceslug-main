@@ -123,6 +123,7 @@ def run_native_training(
                 else:
                     outcome = trainer.train_tokens(tokens, targets, mask)
                     device_batch_status = "unsupported-fallback-gpu-graph"
+                    device_batch_reason = device_batch_reason or "full device batch unsupported"
             else:
                 outcome = trainer.train_tokens(tokens, targets, mask)
             values = [float(value) for value in outcome["loss"]]
