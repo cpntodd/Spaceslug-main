@@ -174,7 +174,10 @@ class PersistentTinyTrainer:
         batch = create(self.handle, len(controls), window_length)
         try:
             upload(batch, tokens, targets, masks, controls, len(controls), window_length)
-            return train(self.handle, batch, self.learning_rate, float(sum(masks) or 1))
+            result = train(self.handle, batch, self.learning_rate, float(sum(masks) or 1))
+            if result.get("status") == "ok" and not result.get("gpu_execution", False):
+                return {"status": "unsupported", "gpu_execution": False, "reason": "full batch result did not confirm GPU execution"}
+            return result
         finally:
             close(batch)
 
