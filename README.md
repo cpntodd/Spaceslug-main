@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Spaceslug Logo.png" alt="Spaceslug logo" width="220">
+  <img src="git_banner.png" alt="Spaceslug mascot riding a GPU through a starfield" width="820">
 </p>
 
 <h1 align="center">Spaceslug</h1>
