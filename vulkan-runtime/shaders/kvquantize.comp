@@ -1,0 +1,80 @@
+#version 450
+
+// kvquantize: fp16 -> int8 + per-group fp16 scales, mirroring
+// cactus_quantize_kv_fp16_to_int8 EXACTLY.
+//
+//   per (head-row, group): scale = max_abs / 127.0  (floored at 1e-10)
+//   q[k] = round(src[k] / scale), clamped to [-128, 127]
+//
+// int8 is stored one value per int32 word (correctness-first; M6d can pack).
+// The scale formula and the round-half-away-from-zero tie rule match std::round
+// (GLSL round() tie direction is implementation-defined, so we write it out).
+//
+// Grid: (num_groups, num_head_rows); 64 threads per workgroup (1 wave64). Each
+// group has <= group_size (<= 32) active lanes; max is reduced by a serial scan
+// of the active lanes (bounded by group_size, trivially cheap).
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer Src    { uint src[];    }; // [rows][head_dim] fp16
+layout(std430, binding = 1) writeonly buffer Dst    { int dst[];     }; // [rows][head_dim] int8
+layout(std430, binding = 2) writeonly buffer Scales { float scales[]; }; // [rows][num_groups]
+
+layout(push_constant) uniform PC {
+    uint seq_len;
+    uint kv_heads;
+    uint head_dim;
+    uint group_size;
+    uint num_groups;
+} pc;
+
+shared float sabs[64];
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+
+float round_half_away(float v) {
+    return (v >= 0.0) ? floor(v + 0.5) : ceil(v - 0.5);
+}
+
+void main() {
+    uint row = gl_WorkGroupID.y; // head-row idx (0 .. seq_len*kv_heads-1)
+    uint g   = gl_WorkGroupID.x; // group within the head
+    uint tid = gl_LocalInvocationID.x;
+
+    uint head_base = row * pc.head_dim;
+    uint gstart = g * pc.group_size;
+    uint gcount = min(pc.group_size, pc.head_dim - gstart);
+
+    float v = 0.0;
+    if (tid < gcount) {
+        v = f16_load(src[head_base + gstart + tid]);
+    }
+    sabs[tid] = abs(v);
+    barrier();
+
+    // Serial max over the active lanes (gcount <= group_size <= 32).
+    float m = 0.0;
+    if (tid == 0u) {
+        for (uint i = 0u; i < gcount; ++i) {
+            m = max(m, sabs[i]);
+        }
+        sabs[0] = m;
+    }
+    barrier();
+    m = sabs[0];
+
+    float scale = m / 127.0;
+    if (scale < 1e-10) scale = 1e-10;
+
+    if (tid == 0u) {
+        scales[row * pc.num_groups + g] = scale;
+    }
+
+    if (tid < gcount) {
+        float inv_scale = 1.0 / scale;
+        float val = v * inv_scale;
+        float q = round_half_away(val);
+        int qi = int(clamp(q, -128.0, 127.0));
+        dst[head_base + gstart + tid] = qi;
+    }
+}

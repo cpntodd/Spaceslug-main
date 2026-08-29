@@ -333,7 +333,9 @@ class DesktopAppTest(unittest.TestCase):
         root.withdraw()
         try:
             app = DesktopApp(controller=DesktopController(), root=root)
-            self.assertEqual(len(app.notebook.tabs()), 5)
+            self.assertNotIn("notebook", app.__dict__)
+            self.assertEqual(set(app._nav_buttons), set(TAB_NAMES))
+            self.assertEqual(app._screen_title.cget("text"), "Home")
             app.controller.record_loss(2.0)
             app.controller.record_loss(1.0)
             app.refresh()

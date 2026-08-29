@@ -1,0 +1,56 @@
+#version 450
+
+// rmsnorm_f16: y[r][i] = x[r][i] * w[i] / sqrt(mean_i(x[r][i]^2) + eps), fp16
+// storage, fp32 accumulation. Mirrors cactus_rms_norm_f16 (no bias).
+//
+// One workgroup per row, 256 threads (4 wave64 on gfx803). Each thread sums
+// x^2 over its strided slice, then a 256-partial LDS binary-tree reduction.
+// Thread 0 produces inv = 1/sqrt(sum/dims + eps); every thread scales by w[i].
+//
+// eps is a push constant (the cactus signature carries it). dims need not be a
+// multiple of 256 (strided loop bounds-checks).
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer X { uint x[]; }; // [batch][dims]
+layout(std430, binding = 1) readonly  buffer W { uint w[]; }; // [dims]
+layout(std430, binding = 2) writeonly buffer Y { uint y[]; }; // [batch][dims]
+
+layout(push_constant) uniform PC {
+    uint batch;
+    uint dims;
+    float eps;
+} pc;
+
+shared float sq[256];
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+uint  f16_store(float f) { return packHalf2x16(vec2(f, 0.0)); }
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    uint base = row * pc.dims;
+
+    float localSum = 0.0;
+    for (uint i = tid; i < pc.dims; i += 256u) {
+        float v = f16_load(x[base + i]);
+        localSum += v * v;
+    }
+    sq[tid] = localSum;
+    barrier();
+
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (tid < s) {
+            sq[tid] += sq[tid + s];
+        }
+        barrier();
+    }
+
+    // 1.0/sqrt (not inversesqrt): accurate enough for the 1e-2/1e-3 tolerance.
+    float invRms = 1.0 / sqrt(sq[0] / float(pc.dims) + pc.eps);
+
+    for (uint i = tid; i < pc.dims; i += 256u) {
+        y[base + i] = f16_store(f16_load(x[base + i]) * invRms * f16_load(w[i]));
+    }
+}

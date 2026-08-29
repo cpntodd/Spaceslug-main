@@ -1,0 +1,66 @@
+#version 450
+
+// rmsnorm: y[r][i] = x[r][i] * w[i] / sqrt(mean_i(x[r][i]^2) + eps), fp32.
+//
+// One workgroup per row, 256 threads (4 wave64 on gfx803). Each thread
+// accumulates a partial sum of x^2 over its strided slice of the row, then the
+// 256 partials are combined with a binary LDS tree reduction (8 barriers).
+// Thread 0 produces 1/sqrt(sum/N + eps); every thread then scales its slice by
+// w[i] * that factor.
+//
+// gfx803 (Polaris) rules:
+//   - wave64 only: 256 threads = 4 waves (multiple of 64).
+//   - LDS <= 32 KB/workgroup. Here: 256 floats = 1 KB.
+//   - fp32 only (1.0/sqrt(), not the approximate inversesqrt). eps folded into
+//     reduction so the sum of squares is computed once.
+//
+// N need not be a multiple of 256: the strided loop bounds-checks each index.
+// The host test uses R=128, N=4096 (4096/256 = 16 elements per thread).
+
+#define EPS 1e-5
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer X { float x[]; }; // R * N
+layout(std430, binding = 1) readonly  buffer W { float w[]; }; // N
+layout(std430, binding = 2) writeonly buffer Y { float y[]; }; // R * N
+
+layout(push_constant) uniform PC {
+    uint R; // rows
+    uint N; // hidden dim (cols per row)
+} pc;
+
+shared float sq[256];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    uint base = row * pc.N;
+
+    // Per-thread partial sum of squares over a strided slice of the row.
+    float localSum = 0.0;
+    for (uint i = tid; i < pc.N; i += 256u) {
+        float v = x[base + i];
+        localSum += v * v;
+    }
+    sq[tid] = localSum;
+    barrier(); // all partials visible before the tree reduction reads them
+
+    // Binary tree reduction over the 256 partials.
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (tid < s) {
+            sq[tid] += sq[tid + s];
+        }
+        barrier();
+    }
+
+    // 1.0/sqrt() (not inversesqrt): GCN's V_RSQ_F32 is an approximate
+    // reciprocal-sqrt; sqrt + division are IEEE-accurate to ~1 ulp, which is
+    // what the tight 1e-5 host tolerance needs.
+    float invRms = 1.0 / sqrt(sq[0] / float(pc.N) + EPS);
+
+    // Scale this thread's slice by w[i] / rms.
+    for (uint i = tid; i < pc.N; i += 256u) {
+        y[base + i] = x[base + i] * w[i] * invRms;
+    }
+}

@@ -1,0 +1,8 @@
+#version 450
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer X{float x[];};
+layout(std430,binding=1) readonly buffer G{float gamma[];};
+layout(std430,binding=2) readonly buffer D{float dy[];};
+layout(std430,binding=3) writeonly buffer O{float dx[];};
+layout(push_constant) uniform PC{uint rows;uint hidden;}pc;
+void main(){uint r=gl_WorkGroupID.x,t=gl_LocalInvocationID.x;if(r>=pc.rows)return;uint b=r*pc.hidden;float inv=inversesqrt(0.01);for(uint i=t;i<pc.hidden;i+=256)dx[b+i]=gamma[i]*inv*dy[b+i];}

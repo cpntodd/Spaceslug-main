@@ -1,0 +1,160 @@
+#version 450
+
+// attention_f16: naive (correct) masked/causal GQA attention, fp16 storage,
+// fp32 compute. Mirrors cactus_attention_f16 / attention_naive exactly.
+//
+// One thread per query (b, qh, q) — scalar, two passes over KV (max, then
+// softmax+weighted-sum), identical to the CPU reference. No LDS, no tile.
+// This is correctness-first (the M6d flash kernel is perf work); modest test
+// sizes keep it fast even on lavapipe.
+//
+// Mask semantics (match attention_naive):
+//   - multiplicative (mask_is_additive == 0): score = -inf when mask == 0
+//   - additive      (mask_is_additive == 1): score += mask (or -inf if non-finite)
+//   - causal: kv_end = min(kv_end, abs_q + 1); window: kv_start = abs_q - window
+//
+// fp16 storage: one value per uint32 (low 16 bits).
+
+#define MAX_VDIM 64 // host contract: v_head_dim <= 64
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer Q    { uint qdata[]; }; // [batch][seq][qheads][head_dim]
+layout(std430, binding = 1) readonly  buffer K    { uint k[];    }; // [batch][kv_seq][kvheads][head_dim]
+layout(std430, binding = 2) readonly  buffer V    { uint v[];    }; // [batch][kv_seq][kvheads][v_head_dim]
+layout(std430, binding = 3) readonly  buffer MASK { uint mask[]; }; // optional
+layout(std430, binding = 4) writeonly buffer O    { uint o[];    }; // [batch][seq][qheads][v_head_dim]
+
+layout(push_constant) uniform PC {
+    uint batch;
+    uint seq_len;
+    uint kv_seq_len;
+    uint num_q_heads;
+    uint num_kv_heads;
+    uint head_dim;
+    uint v_head_dim;
+    uint position_offset;
+    uint window_size;
+    uint is_causal;
+    uint has_mask;
+    uint mask_is_additive;
+    uint mask_per_head;
+    float scale;
+    float logit_cap;
+} pc;
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+uint  f16_store(float f) { return packHalf2x16(vec2(f, 0.0)); }
+
+bool is_finite(float x) { return !isnan(x) && !isinf(x); }
+
+void main() {
+    uint qid = gl_GlobalInvocationID.x;
+    uint total = pc.batch * pc.num_q_heads * pc.seq_len;
+    if (qid >= total) return;
+
+    uint q  = qid % pc.seq_len;
+    uint qh = (qid / pc.seq_len) % pc.num_q_heads;
+    uint b  = qid / (pc.seq_len * pc.num_q_heads);
+
+    uint gqa = pc.num_q_heads / pc.num_kv_heads;
+    uint kh  = qh / gqa;
+    uint abs_q = pc.position_offset + q;
+
+    uint kv_start = 0u;
+    uint kv_end = pc.kv_seq_len;
+    if (pc.window_size > 0u && pc.window_size < pc.kv_seq_len) {
+        if (abs_q > pc.window_size) kv_start = abs_q - pc.window_size;
+        if (pc.is_causal != 0u) kv_end = min(kv_end, abs_q + 1u);
+    } else if (pc.is_causal != 0u) {
+        kv_end = min(kv_end, abs_q + 1u);
+    }
+
+    uint q_batch_stride = pc.seq_len * pc.num_q_heads * pc.head_dim;
+    uint q_seq_stride   = pc.num_q_heads * pc.head_dim;
+    uint kv_seq_stride  = pc.num_kv_heads * pc.head_dim;
+    uint kv_seq_stride_v = pc.num_kv_heads * pc.v_head_dim;
+    uint mask_batch_stride = (pc.mask_per_head != 0u)
+        ? (pc.num_q_heads * pc.seq_len * pc.kv_seq_len)
+        : (pc.seq_len * pc.kv_seq_len);
+
+    uint qbase = b * q_batch_stride + q * q_seq_stride + qh * pc.head_dim;
+    uint mbase = (pc.has_mask != 0u)
+        ? (b * mask_batch_stride + ((pc.mask_per_head != 0u) ? qh * pc.seq_len * pc.kv_seq_len : 0u))
+        : 0u;
+
+    // --- pass 1: max score ---
+    const float NEG_INF = -1.0 / 0.0;
+    float max_score = NEG_INF;
+    for (uint kv = kv_start; kv < kv_end; ++kv) {
+        float s = 0.0;
+        uint kbase = b * pc.kv_seq_len * kv_seq_stride + kv * kv_seq_stride + kh * pc.head_dim;
+        for (uint d = 0u; d < pc.head_dim; ++d) {
+            s += f16_load(qdata[qbase + d]) * f16_load(k[kbase + d]);
+        }
+        s *= pc.scale;
+
+        if (pc.has_mask != 0u) {
+            float m = f16_load(mask[mbase + q * pc.kv_seq_len + kv]);
+            if (pc.mask_is_additive != 0u) {
+                if (is_finite(m)) s += m; else s = NEG_INF;
+            } else if (m == 0.0) {
+                s = NEG_INF;
+            }
+        }
+        if (pc.logit_cap > 0.0 && is_finite(s)) {
+            s = pc.logit_cap * tanh(s / pc.logit_cap);
+        }
+        max_score = max(max_score, s);
+    }
+
+    // --- pass 2: exp + sum + weighted V ---
+    float o_acc[MAX_VDIM];
+    for (uint d = 0u; d < pc.v_head_dim; ++d) o_acc[d] = 0.0;
+    float sum = 0.0;
+
+    if (is_finite(max_score)) {
+        for (uint kv = kv_start; kv < kv_end; ++kv) {
+            float s = 0.0;
+            uint kbase = b * pc.kv_seq_len * kv_seq_stride + kv * kv_seq_stride + kh * pc.head_dim;
+            for (uint d = 0u; d < pc.head_dim; ++d) {
+                s += f16_load(qdata[qbase + d]) * f16_load(k[kbase + d]);
+            }
+            s *= pc.scale;
+
+            if (pc.has_mask != 0u) {
+                float m = f16_load(mask[mbase + q * pc.kv_seq_len + kv]);
+                if (pc.mask_is_additive != 0u) {
+                    if (is_finite(m)) s += m; else s = NEG_INF;
+                } else if (m == 0.0) {
+                    s = NEG_INF;
+                }
+            }
+            if (pc.logit_cap > 0.0 && is_finite(s)) {
+                s = pc.logit_cap * tanh(s / pc.logit_cap);
+            }
+            if (s == NEG_INF) continue;
+
+            float wgt = exp(s - max_score);
+            sum += wgt;
+
+            uint vbase = b * pc.kv_seq_len * kv_seq_stride_v + kv * kv_seq_stride_v + kh * pc.v_head_dim;
+            for (uint d = 0u; d < pc.v_head_dim; ++d) {
+                o_acc[d] += wgt * f16_load(v[vbase + d]);
+            }
+        }
+    }
+
+    uint obase = b * pc.seq_len * pc.num_q_heads * pc.v_head_dim
+                 + q * pc.num_q_heads * pc.v_head_dim + qh * pc.v_head_dim;
+    if (sum > 0.0) {
+        float inv = 1.0 / sum;
+        for (uint d = 0u; d < pc.v_head_dim; ++d) {
+            o[obase + d] = f16_store(o_acc[d] * inv);
+        }
+    } else {
+        for (uint d = 0u; d < pc.v_head_dim; ++d) {
+            o[obase + d] = f16_store(0.0);
+        }
+    }
+}

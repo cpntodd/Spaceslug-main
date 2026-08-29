@@ -1,0 +1,32 @@
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(std430,binding=0) readonly buffer Embeddings { float embedding[]; };
+layout(std430,binding=1) readonly buffer Positions { float position[]; };
+layout(std430,binding=2) readonly buffer QueryWeight { float query[]; };
+layout(std430,binding=3) readonly buffer KeyWeight { float key[]; };
+layout(std430,binding=4) readonly buffer ValueWeight { float value[]; };
+layout(std430,binding=5) readonly buffer OutputWeight { float output_weight[]; };
+layout(std430,binding=6) readonly buffer LmHead { float lm_head[]; };
+layout(std430,binding=7) readonly buffer Tokens { uint tokens[]; };
+layout(std430,binding=8) buffer States { float states[]; };
+layout(std430,binding=9) buffer Activations { float activations[]; };
+layout(std430,binding=10) buffer Projected { float projected[]; };
+layout(std430,binding=11) buffer Logits { float logits[]; };
+layout(std430,binding=12) buffer ReadbackMirror { float mirror[]; };
+layout(std430,binding=13) buffer QRows { float q_rows[]; };
+layout(std430,binding=14) buffer KRows { float k_rows[]; };
+layout(std430,binding=15) buffer VRows { float v_rows[]; };
+layout(push_constant) uniform PC { uint seq_length; uint final_only; } pc;
+const uint H=64u, V=259u, VP=320u, TCAP=128u;
+float state_value(uint row,uint c){uint t=tokens[row];return embedding[t*H+c]+position[row*H+c];}
+float proj(uint row,uint c,uint mode){float s=0.;for(uint i=0u;i<H;++i){float w=mode==0u?query[i*H+c]:(mode==1u?key[i*H+c]:value[i*H+c]);s+=state_value(row,i)*w;}return s;}
+void main(){uint col=gl_GlobalInvocationID.x,row=gl_GlobalInvocationID.y;if(row>=pc.seq_length||col>=VP)return;
+  for(uint c=0u;c<H;++c)states[row*H+c]=state_value(row,c);
+  float scores[TCAP];float mx=-3.402823466e+38;float q[H];for(uint c=0u;c<H;++c)q[c]=proj(row,c,0u);
+  for(uint krow=0u;krow<=row;++krow){float s=0.;for(uint c=0u;c<H;++c)s+=q[c]*proj(krow,c,1u);scores[krow]=s*0.125;mx=max(mx,scores[krow]);}
+  float denom=0.;for(uint krow=0u;krow<=row;++krow)denom+=exp(scores[krow]-mx);
+  float context[H];for(uint c=0u;c<H;++c){float s=0.;for(uint krow=0u;krow<=row;++krow)s+=exp(scores[krow]-mx)/denom*proj(krow,c,2u);context[c]=s;activations[row*H+c]=s;}
+  float projected_value=0.;if(col<V)for(uint c=0u;c<H;++c){float oo=0.;for(uint i=0u;i<H;++i)oo+=context[i]*output_weight[i*H+c];if(col==0u)projected[row*H+c]=oo;projected_value+=oo*lm_head[c*VP+col];}
+  uint out_row=pc.final_only!=0u?0u:row;logits[out_row*VP+col]=projected_value;mirror[out_row*VP+col]=projected_value;
+  if (col < H) { q_rows[row*H+col] = q[col]; k_rows[row*H+col] = proj(row,col,1u); v_rows[row*H+col] = proj(row,col,2u); }
+}

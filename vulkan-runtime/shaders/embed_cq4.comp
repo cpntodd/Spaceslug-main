@@ -1,0 +1,61 @@
+#version 450
+
+// embed_cq4: CQ4 orthogonal embedding row dequant + gather.
+//   out[m][j] = ( sum_i codebook[idx(row, i)] * rotation[j][i] ) * norm[row] * recip[j]
+// where row = ids[m]. Mirrors cactus_quant_dequantize_orthogonal_embedding_row
+// (non-interleaved LSB decode; flags == 0 in the test).
+//
+// One thread per output element (m, j). The inner decode loop is O(K); fine at
+// correctness sizes (K = 512). ids are uint32 (token ids fit; full int64 is a
+// trivial extension, but gfx803/GLSL needs no 64-bit arithmetic for the test).
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer PACKED { uint packed[]; }; // [num_rows * pgb] bytes
+layout(std430, binding = 1) readonly  buffer CB     { uint codebook[]; }; // [2^bits] fp16
+layout(std430, binding = 2) readonly  buffer NORMS  { uint norms[]; };  // [num_rows] fp16
+layout(std430, binding = 3) readonly  buffer RECIP  { uint recip[]; };  // [K] fp16
+layout(std430, binding = 4) readonly  buffer ROT    { uint rot[]; };    // [K][K] fp16 row-major [j][i]
+layout(std430, binding = 5) readonly  buffer IDS    { uint ids[]; };    // [M]
+layout(std430, binding = 6) writeonly buffer OUTB   { uint o[]; };      // [M][K] fp16
+
+layout(push_constant) uniform PC {
+    uint bits;
+    uint K;
+    uint num_rows;
+    uint M;
+    uint has_recip;
+} pc;
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+uint  f16_store(float f) { return packHalf2x16(vec2(f, 0.0)); }
+
+uint extract_idx_lsb(uint base, uint k, uint bits) {
+    if (bits == 4u) return (packed[base + k / 2u] >> ((k & 1u) * 4u)) & 0xFu;
+    if (bits == 2u) return (packed[base + k / 4u] >> ((k & 3u) * 2u)) & 0x3u;
+    if (bits == 1u) return (packed[base + k / 8u] >> (k & 7u)) & 0x1u;
+    return 0u;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.M * pc.K;
+    if (gid >= total) return;
+
+    uint m = gid / pc.K;
+    uint j = gid % pc.K;
+    uint row = ids[m];
+
+    uint pgb = (pc.K * pc.bits + 7u) / 8u;
+    uint base = row * pgb;
+
+    float acc = 0.0;
+    for (uint i = 0u; i < pc.K; ++i) {
+        uint idx = extract_idx_lsb(base, i, pc.bits);
+        acc += f16_load(codebook[idx]) * f16_load(rot[j * pc.K + i]);
+    }
+
+    float norm = f16_load(norms[row]);
+    float sc = (pc.has_recip != 0u) ? f16_load(recip[j]) : 1.0;
+    o[m * pc.K + j] = f16_store(acc * norm * sc);
+}

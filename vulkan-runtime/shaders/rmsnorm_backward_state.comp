@@ -1,0 +1,30 @@
+#version 450
+// True masked RMSNorm backward using forward-preserved raw x and inv_rms.
+// This primitive is intentionally separate from the primary graph until its
+// complete liveness and downstream-gradient wiring are proven. It uses FP32
+// arithmetic and a wave64-compatible 256-thread workgroup.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer X { float x[]; };
+layout(std430,binding=1) readonly buffer Gamma { float gamma[]; };
+layout(std430,binding=2) readonly buffer DY { float dy[]; };
+layout(std430,binding=3) readonly buffer Mask { uint mask[]; };
+layout(std430,binding=4) readonly buffer InvRms { float inv_rms[]; };
+layout(std430,binding=5) writeonly buffer DX { float dx[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; } pc;
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint lane = gl_LocalInvocationID.x;
+    if (row >= pc.rows) return;
+    uint base = row * pc.hidden;
+    if (mask[row] == 0u) {
+        for (uint c = lane; c < pc.hidden; c += 256u) dx[base + c] = 0.0;
+        return;
+    }
+    float dot = 0.0;
+    for (uint c = 0u; c < pc.hidden; ++c)
+        dot += x[base + c] * gamma[c] * dy[base + c];
+    float inv = inv_rms[row];
+    for (uint c = lane; c < pc.hidden; c += 256u)
+        dx[base + c] = gamma[c] * inv * dy[base + c] -
+                       x[base + c] * inv * inv * inv * dot / float(pc.hidden);
+}

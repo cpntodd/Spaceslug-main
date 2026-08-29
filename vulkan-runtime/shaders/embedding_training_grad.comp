@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer TokenIds { uint token_ids[]; };
+layout(std430, binding = 1) readonly buffer DState { float dstate[]; };
+layout(std430, binding = 2) readonly buffer Mask { uint mask[]; };
+layout(std430, binding = 3) writeonly buffer Gradient { float gradient[]; };
+layout(push_constant) uniform PC { uint vocab; uint hidden; uint rows; uint has_mask; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint count = pc.vocab * pc.hidden;
+    if (id >= count) return;
+    uint v = id / pc.hidden;
+    uint h = id % pc.hidden;
+    float sum = 0.0;
+    for (uint r = 0u; r < pc.rows; ++r)
+        if ((pc.has_mask == 0u || mask[r] != 0u) && token_ids[r] == v)
+            sum += dstate[r * pc.hidden + h];
+    gradient[id] = sum;
+}

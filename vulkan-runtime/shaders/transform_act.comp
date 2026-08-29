@@ -1,0 +1,127 @@
+#version 450
+
+// transform_act: fp16 activation A -> code-basis A' (M x K), mirroring the
+// cactus activation transform used inside cactus_quant_matmul.
+//
+//   mode 0 (hadamard, non-orthogonal): one thread per (m, group).
+//       work[k] = A[m][base+k] * recip[base+k] * left_signs[k]
+//       work = FWHT_normalized(work, gs)          (1/sqrt(gs) at the end)
+//       work[k] *= right_signs[k]
+//       A'[m][base+j] = work[permutation[j]]  (or work[j] if no permutation)
+//
+//   mode 1 (orthogonal): one thread per (m, output-column PAIR).
+//       A'[m][i] = sum_k A[m][k] * recip[k] * rotation[k][i]
+//
+// recip is the pre-computed per-element input-scale reciprocal (fp32) — the
+// host folds the input_scale_recip / 1/input_scale / 1.0 cases (the same logic
+// as cactus_quant_input_scale_recip1) before dispatch.
+//
+// M7a: A' is emitted as PACKED fp16 (2 per uint32; even index = low half, odd
+// index = high half, byte-identical to fp16pack mode 1). This drops the
+// separate cast step from the CQ4 chain — A' feeds sgemm_f16_am directly. The
+// FWHT/signs/permutation/rotation math is byte-identical to before; only the
+// output STORAGE layout changes (and the fp32->fp16 rounding, which used to be
+// a separate cast dispatch, now happens here via packHalf2x16).
+//
+// The input A is still one fp16 per uint32 (low 16 bits) — that is the
+// activation layout the host stages (fp16pack mode 0); only the OUTPUT is
+// packed. group_size must be EVEN (power of two >= 2 for the FWHT), so the
+// output pairs stay within a group. K must be even (host contract).
+//
+// group_size <= 256 (host contract). work[] lives in registers; a serial
+// FWHT per (m, group) is fine at correctness sizes.
+
+#define MAX_GS 256
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A      { uint a[];      }; // [M][K] fp16 (one per word)
+layout(std430, binding = 1) readonly  buffer RECIP  { float recip[]; }; // [K]
+layout(std430, binding = 2) readonly  buffer LSIGNS { int ls[];     }; // [gs] int8 (1/-1), may be dummy
+layout(std430, binding = 3) readonly  buffer RSIGNS { int rs[];     }; // [gs] int8 (1/-1), may be dummy
+layout(std430, binding = 4) readonly  buffer PERM   { uint perm[];  }; // [gs], may be dummy
+layout(std430, binding = 5) readonly  buffer ROT    { uint rot[];   }; // [K][K] fp16, orthogonal only
+layout(std430, binding = 6) writeonly buffer A_OUT  { uint a_out[]; }; // [M][K] packed fp16
+
+layout(push_constant) uniform PC {
+    uint mode;       // 0 = hadamard, 1 = orthogonal
+    uint M;
+    uint K;
+    uint group_size;
+    uint num_groups;
+    uint has_left;
+    uint has_right;
+    uint has_perm;
+} pc;
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (pc.mode == 0u) {
+        uint total = pc.M * pc.num_groups;
+        if (gid >= total) return;
+        uint m = gid / pc.num_groups;
+        uint g = gid % pc.num_groups;
+        uint base = g * pc.group_size;
+        uint gs = pc.group_size;
+
+        float work[MAX_GS];
+        for (uint k = 0u; k < gs; ++k) {
+            float sign = (pc.has_left != 0u) ? float(ls[k]) : 1.0;
+            work[k] = f16_load(a[m * pc.K + base + k]) * recip[base + k] * sign;
+        }
+
+        // normalized Walsh-Hadamard (in-place, normalize at the end)
+        for (uint h = 1u; h < gs; h <<= 1u) {
+            for (uint i = 0u; i < gs; i += (h << 1u)) {
+                for (uint j = i; j < i + h; ++j) {
+                    float av = work[j];
+                    float bv = work[j + h];
+                    work[j] = av + bv;
+                    work[j + h] = av - bv;
+                }
+            }
+        }
+        float inv = 1.0 / sqrt(float(gs));
+        for (uint k = 0u; k < gs; ++k) work[k] *= inv;
+
+        for (uint k = 0u; k < gs; ++k) {
+            if (pc.has_right != 0u) work[k] *= float(rs[k]);
+        }
+
+        // Packed output: pairs of consecutive j share a word. base is a multiple
+        // of gs (gs even) and K is even, so (m*K + base + j) is even when j is
+        // even -> the low half; j odd -> the high half.
+        if (pc.has_perm != 0u) {
+            for (uint j = 0u; j < gs; j += 2u) {
+                uint ei = m * pc.K + base + j;
+                a_out[ei >> 1u] = packHalf2x16(vec2(work[perm[j]], work[perm[j + 1u]]));
+            }
+        } else {
+            for (uint j = 0u; j < gs; j += 2u) {
+                uint ei = m * pc.K + base + j;
+                a_out[ei >> 1u] = packHalf2x16(vec2(work[j], work[j + 1u]));
+            }
+        }
+    } else {
+        // orthogonal: one thread per output-column PAIR (i0 even, i1 = i0+1).
+        uint total = pc.M * (pc.K / 2u);
+        if (gid >= total) return;
+        uint m = gid / (pc.K / 2u);
+        uint ipair = gid % (pc.K / 2u);
+        uint i0 = ipair * 2u;
+        uint i1 = i0 + 1u;
+
+        float acc0 = 0.0;
+        float acc1 = 0.0;
+        for (uint k = 0u; k < pc.K; ++k) {
+            float av = f16_load(a[m * pc.K + k]) * recip[k];
+            acc0 += av * f16_load(rot[k * pc.K + i0]);
+            acc1 += av * f16_load(rot[k * pc.K + i1]);
+        }
+        uint ei = m * pc.K + i0; // even
+        a_out[ei >> 1u] = packHalf2x16(vec2(acc0, acc1));
+    }
+}

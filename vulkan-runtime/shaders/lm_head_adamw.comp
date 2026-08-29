@@ -1,0 +1,27 @@
+#version 450
+// Persistent AdamW for the standalone caller-supplied LM-head gradient.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) buffer WeightBuffer { float weight[]; };
+layout(std430, binding = 1) readonly buffer GradientBuffer { float gradient[]; };
+layout(std430, binding = 2) buffer MBuffer { float m[]; };
+layout(std430, binding = 3) buffer VBuffer { float v[]; };
+layout(push_constant) uniform PC {
+    uint count;
+    uint step;
+    float learning_rate;
+    float beta1;
+    float beta2;
+    float epsilon;
+    float weight_decay;
+} pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.count) return;
+    float g = gradient[id];
+    float mm = m[id] = pc.beta1 * m[id] + (1.0 - pc.beta1) * g;
+    float vv = v[id] = pc.beta2 * v[id] + (1.0 - pc.beta2) * g * g;
+    float bc1 = 1.0 - pow(pc.beta1, float(pc.step));
+    float bc2 = 1.0 - pow(pc.beta2, float(pc.step));
+    float update = (mm / bc1) / (sqrt(vv / bc2) + pc.epsilon);
+    weight[id] = (1.0 - pc.learning_rate * pc.weight_decay) * weight[id] - pc.learning_rate * update;
+}

@@ -1,0 +1,9 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) buffer Weight { float weight[]; };
+layout(std430, binding = 1) readonly buffer Gradient { float gradient[]; };
+layout(push_constant) uniform PC { uint count; float learning_rate; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id < pc.count) weight[id] -= pc.learning_rate * gradient[id];
+}

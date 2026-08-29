@@ -1,0 +1,7 @@
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <vector>
+static float gelu(float z){return .5f*z*(1.f+std::tanh(.7978845608f*(z+.044715f*z*z*z)));}
+static double loss(std::vector<float>const&x,std::vector<float>const&w1,std::vector<float>const&w2){constexpr uint32_t H=4,I=16;double l=0;for(uint32_t r=0;r<3;++r)for(uint32_t o=0;o<H;++o){float y=x[r*H+o];for(uint32_t j=0;j<I;++j){float z=0;for(uint32_t k=0;k<H;++k)z+=x[r*H+k]*w1[k*I+j];y+=gelu(z)*w2[j*H+o];}l+=.5*double(y*y);}return l;}
+int main(){constexpr uint32_t H=4,I=16;std::vector<float>x(12),w1(H*I),w2(I*H),dy(12,.1f),ref(H*I);for(size_t i=0;i<x.size();++i)x[i]=.03f*float(int(i%7)-3);for(size_t i=0;i<w1.size();++i)w1[i]=.02f*float(int(i%5)-2);for(size_t i=0;i<w2.size();++i)w2[i]=.02f*float(int(i%3)-1);for(uint32_t r=0;r<3;++r)for(uint32_t j=0;j<I;++j){float z=0;for(uint32_t k=0;k<H;++k)z+=x[r*H+k]*w1[k*I+j];float t=std::tanh(.7978845608f*(z+.044715f*z*z*z));float gd=.5f*(1+t)+.5f*z*(1-t*t)*.7978845608f*(1+3*.044715f*z*z);float q=0;for(uint32_t o=0;o<H;++o){float y=x[r*H+o];for(uint32_t u=0;u<I;++u){float a=0;for(uint32_t k=0;k<H;++k)a+=x[r*H+k]*w1[k*I+u];y+=gelu(a)*w2[u*H+o];}q+=y*w2[j*H+o];}for(uint32_t k=0;k<H;++k)ref[k*I+j]+=x[r*H+k]*gd*q;}const float h=1e-3f;double me=0;for(size_t p=0;p<w1.size();++p){auto a=w1,b=w1;a[p]+=h;b[p]-=h;double fd=(loss(x,a,w2)-loss(x,b,w2))/(2*h);me=std::max(me,std::abs(fd-double(ref[p])));}if(me>1e-3){std::cerr<<"finite difference mismatch "<<me<<"\n";return 1;}std::cout<<"FFN finite difference: PASS max="<<me<<"\n";return 0;}

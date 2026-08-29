@@ -1,0 +1,20 @@
+#version 450
+// Deterministic RMSNorm scale-gradient reduction: one invocation per hidden lane.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer X { float x[]; };
+layout(std430, binding = 1) readonly buffer DY { float dy[]; };
+layout(std430, binding = 2) writeonly buffer DGamma { float dgamma[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; } pc;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.hidden) return;
+    float sum = 0.0;
+    for (uint row = 0u; row < pc.rows; ++row) {
+        uint base = row * pc.hidden;
+        float ss = 0.0;
+        for (uint j = 0u; j < pc.hidden; ++j) ss += x[base+j] * x[base+j];
+        float inv = inversesqrt(ss / float(pc.hidden) + 1e-5);
+        sum += x[base+i] * inv * dy[base+i];
+    }
+    dgamma[i] = sum;
+}

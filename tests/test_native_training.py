@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from spaceslug.backend import BackendSession
-from spaceslug.native_training import integrated_tiny_embedding_sgd_capability, integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
+from spaceslug.native_training import integrated_tiny_embedding_sgd_capability, integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, integrated_tiny_positions_sgd_capability, native_fp32_lm_head_capability, native_fp32_lm_head_training_plan
 
 
 class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
@@ -41,10 +41,22 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertTrue(capability["graph_owned_embedding"])
         self.assertFalse(capability["standalone_api"])
         self.assertEqual(capability["rows_max"], 128)
-        self.assertFalse(capability["positions_supported"])
+        self.assertTrue(capability["positions_supported"])
+        self.assertEqual(capability["positions_optimizer"], "sgd")
         self.assertFalse(capability["ffn_supported"])
         self.assertFalse(capability["normalization_supported"])
         self.assertFalse(capability["dataset_integration"])
+
+    def test_integrated_positions_contract_is_bounded_sgd_only(self):
+        capability = integrated_tiny_positions_sgd_capability(available=True, runtime_capability="mock-runtime")
+        self.assertEqual(capability["parameter_group"], "positions")
+        self.assertTrue(capability["integrated_graph_sgd"])
+        self.assertTrue(capability["graph_owned_positions"])
+        self.assertFalse(capability["adamw"])
+        self.assertFalse(capability["checkpoint_integration"])
+        self.assertEqual(capability["rows_max"], 128)
+        self.assertFalse(capability["dataset_integration"])
+        self.assertFalse(capability["retained_training"])
 
     def test_integrated_contract_is_distinct_and_adamw_is_minus_four(self):
         capability = integrated_tiny_lm_head_capability(available=True, runtime_capability="mock-runtime")
@@ -115,6 +127,18 @@ class NativeFP32LMHeadBoundaryTest(unittest.TestCase):
         self.assertEqual(output_adamw["return_code"], 0 if output_adamw["status"] == "available" else -4)
         self.assertEqual(output_adamw["parameter_group"], "output")
         self.assertFalse(metadata["tiny_graph_integrated_qkv_sgd"]["integrated_graph_adamw"])
+
+    def test_mocked_ctypes_trainer_binds_graph_positions_sgd_and_caps_rows(self):
+        session = BackendSession("/tmp/runtime", "test")
+        calls = []
+        class Native:
+            def spaceslug_tiny_forward_train_positions_sgd(self, *args): calls.append(args); return 0
+        session._native = lambda: Native()
+        session.train_tiny_graph_positions_sgd(123, [1, 2], [3, 4], [1, 0], 0.25)
+        self.assertEqual(calls[0][0], 123)
+        self.assertEqual(calls[0][4:], (2, 0.25))
+        with self.assertRaises(ValueError):
+            session.train_tiny_graph_positions_sgd(123, [1] * 129, [2] * 129, [1] * 129, 0.1)
 
     def test_mocked_ctypes_trainer_binds_graph_embedding_sgd_and_caps_rows(self):
         session = BackendSession("/tmp/runtime", "test")

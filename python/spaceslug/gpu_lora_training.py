@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any
 from .backend import BackendError
@@ -44,11 +45,11 @@ def gpu_lora_capability(native_adamw: bool = False) -> dict[str, Any]:
 
 
 def gpu_lora_training_plan() -> dict[str, Any]:
-    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "production_status": "bounded", "training_submission": "normal-submit", "dataset_batch_buffer": "standalone-not-training", "dataset_batch_training_return_code": -3, "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "gpu_adamw", "batched_window_streaming", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizers": ["sgd", "adamw"], "base_weights": "frozen", "unsupported": ["other-model-shapes", "dataset-training", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"operation": "tiny_lora_gpu_training", "status": "persistent-tiny-token-graph", "production_status": "bounded", "training_submission": "normal-submit", "dataset_batch_buffer": "standalone-not-training", "dataset_batch_training_return_code": -3, "steps": ["gpu_tiny_forward", "gpu_causal_loss", "gpu_lm_head_backward", "gpu_projection_backward", "gpu_attention_backward", "gpu_multi_adapter_gradients", "gpu_multi_adapter_sgd", "gpu_adamw", "batched_window_streaming", "adapter_checkpoint_restore"], "buffers": "persistent-token-graph", "optimizers": ["sgd", "adamw"], "base_weights": "frozen", "unsupported": ["other-model-shapes", "positions-adamw", "dataset-training", "retained-training", "ffn-training", "normalization-training", "full-base-training", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
 
 
 def persistent_graph_boundary() -> dict[str, Any]:
-    return {"status": "implemented-bounded", "production_status": "bounded", "immutable_command_buffer_reuse_prototype": True, "fixed_forward_retained_only": True, "training_submission": "normal-submit", "dataset_batch_training_return_code": -3, "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB", "adamw_m", "adamw_v"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizers": ["sgd", "adamw"], "optimizer": "adamw", "base_weights": "frozen", "window_streaming": True, "dataset_device_resident": False}, "unsupported": ["other-model-shapes", "dataset-training", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
+    return {"status": "implemented-bounded", "production_status": "bounded", "immutable_command_buffer_reuse_prototype": True, "fixed_forward_retained_only": True, "training_submission": "normal-submit", "dataset_batch_training_return_code": -3, "persistent": ["embeddings", "positions", "tokens", "targets", "mask", "states", "Q", "K", "V", "attention", "projected", "logits", "dLogits", "loss", "backward_intermediates", "adapter_A", "adapter_B", "adapter_dA", "adapter_dB", "adamw_m", "adamw_v"], "transient": ["host_input_staging", "host_readback", "CPU_reference"], "contract": {"hidden": 64, "vocab": 259, "logits_stride": 320, "sequence_capacity": 128, "ranks": [4, 8], "dtype": "fp32", "optimizers": ["sgd", "adamw"], "optimizer": "adamw", "base_weights": "frozen", "window_streaming": True, "dataset_device_resident": False}, "unsupported": ["other-model-shapes", "positions-adamw", "dataset-training", "retained-training", "ffn-training", "normalization-training", "full-base-training", "fp16-arithmetic", "fp16-tiny-forward-integration"]}
 
 
 def persistent_tiny_capability() -> dict[str, Any]:
@@ -310,7 +311,9 @@ class PersistentTinyTrainer:
         if readback is None:
             raise BackendError("graph-owned base checkpoint ABI unavailable")
         payload = readback(self.handle)
-        payload.update({"format": "spaceslug-tiny-graph-base-checkpoint", "schema_version": 1,
+        payload.setdefault("positions_m", [0.0] * (128 * 64))
+        payload.setdefault("positions_v", [0.0] * (128 * 64))
+        payload.update({"format": "spaceslug-tiny-graph-base-checkpoint", "schema_version": 4,
                         "dataset_device_resident": False, "retained_training": False,
                         "qkv_adamw_unsupported": False,
                         "qkv_adamw_gradient_source": "existing-qkv-gradients",
@@ -323,8 +326,16 @@ class PersistentTinyTrainer:
     def resume_base(cls, backend: Any, model: Any, adapter: Any, path: str | Path, **kwargs: Any) -> "PersistentTinyTrainer":
         """Create a trainer and restore a graph-owned base checkpoint."""
         data = json.loads(Path(path).read_text())
-        if data.get("format") != "spaceslug-tiny-graph-base-checkpoint" or data.get("schema_version") != 1:
+        if data.get("format") != "spaceslug-tiny-graph-base-checkpoint" or data.get("schema_version") != 4:
             raise ValueError("unsupported graph-owned base checkpoint")
+        if int(data.get("group_mask", 0)) not in (31, 127):
+            raise ValueError("schema-v4 graph checkpoint has invalid base groups")
+        if int(data.get("group_mask", 0)) == 127 and (len(data.get("normalization", [])) != 64 or len(data.get("ffn", [])) != 3 * (64 * 256 + 256 + 256 * 64 + 64)):
+            raise ValueError("schema-v4 graph checkpoint has invalid normalization or FFN payload sizes")
+        if len(data.get("positions_m", [])) != 128 * 64 or len(data.get("positions_v", [])) != 128 * 64:
+            raise ValueError("schema-v4 graph checkpoint has invalid positional optimizer state sizes")
+        if len(data.get("embeddings", [])) != 259 * 64 or len(data.get("positions", [])) != 128 * 64:
+            raise ValueError("schema-v4 graph checkpoint has invalid table payload sizes")
         if data.get("dataset_device_resident") or data.get("retained_training"):
             raise ValueError("graph-owned base checkpoint cannot contain dataset or retained state")
         trainer = cls(backend, model, adapter, **kwargs)
@@ -402,6 +413,11 @@ class PersistentTinyTrainer:
             finalize(self.handle, self.learning_rate, self.beta1, self.beta2, self.epsilon, self.weight_decay, float(sum(mask) or 1))
         else:
             finalize(self.handle, self.learning_rate, float(sum(mask) or 1))
+        values = self.readback_adapter()
+        if any(not math.isfinite(value) for group in values for value in group):
+            raise BackendError("native LoRA adapter became non-finite; refusing corrupt checkpoint")
+        if any(abs(value) > 1.0e6 for group in values for value in group):
+            raise BackendError("native LoRA adapter exceeded safe magnitude; refusing corrupt checkpoint")
         self.step_index += 1
         return {"status": "ok", "step": self.step_index, "loss": losses, "gpu_execution": True, "device_resident": True, "optimizer": optimizer, "contract": {"hidden": 64, "vocab": 259, "rank": self.adapter.rank}}
 

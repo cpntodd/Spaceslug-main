@@ -1,0 +1,33 @@
+#version 450
+// Bounded scalar reduction for Tiny fixed-window causal loss.
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer LossBuffer { float loss[]; };
+layout(std430, binding = 1) readonly buffer MaskBuffer { uint mask[]; };
+layout(std430, binding = 2) writeonly buffer ResultBuffer { float total_loss; uint included_count; };
+layout(push_constant) uniform PC { uint rows; } pc;
+shared float partial_loss[128];
+shared uint partial_count[128];
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    float sum = 0.0;
+    uint count = 0u;
+    for (uint row = lane; row < pc.rows; row += 128u) {
+        float value = loss[row];
+        sum += value;
+        if (mask[row] != 0u) count++;
+    }
+    partial_loss[lane] = sum;
+    partial_count[lane] = count;
+    barrier();
+    for (uint stride = 64u; stride != 0u; stride >>= 1u) {
+        if (lane < stride) {
+            partial_loss[lane] += partial_loss[lane + stride];
+            partial_count[lane] += partial_count[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0u) {
+        total_loss = partial_loss[0];
+        included_count = partial_count[0];
+    }
+}

@@ -1,0 +1,30 @@
+#version 450
+// One workgroup per row. Computes masked causal CE and dLogits for padded V.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer LogitsBuffer { float logits[]; };
+layout(std430, binding = 1) readonly buffer TargetsBuffer { uint targets[]; };
+layout(std430, binding = 2) readonly buffer MaskBuffer { uint mask[]; };
+layout(std430, binding = 3) writeonly buffer GradBuffer { float dlogits[]; };
+layout(std430, binding = 4) buffer LossBuffer { float loss[]; };
+layout(push_constant) uniform PC {
+    uint rows;
+    uint vocab;
+    uint logits_stride;
+} pc;
+void main() {
+    uint row = gl_WorkGroupID.x;
+    if (row >= pc.rows || gl_LocalInvocationID.x != 0u) return;
+    uint target = targets[row];
+    bool included = mask[row] != 0u && target < pc.vocab;
+    float maximum = -3.402823466e+38;
+    for (uint col = 0u; col < pc.vocab; ++col) maximum = max(maximum, logits[row * pc.logits_stride + col]);
+    float normalizer = 0.0;
+    for (uint col = 0u; col < pc.vocab; ++col) normalizer += exp(logits[row * pc.logits_stride + col] - maximum);
+    float row_loss = 0.0;
+    for (uint col = 0u; col < pc.vocab; ++col) {
+        float probability = exp(logits[row * pc.logits_stride + col] - maximum) / normalizer;
+        dlogits[row * pc.logits_stride + col] = included ? probability - (col == target ? 1.0 : 0.0) : 0.0;
+    }
+    if (included) row_loss = log(normalizer) + maximum - logits[row * pc.logits_stride + target];
+    loss[row] = row_loss;
+}

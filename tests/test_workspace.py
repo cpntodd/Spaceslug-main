@@ -322,6 +322,10 @@ class WorkspaceServiceTest(unittest.TestCase):
             self.assertEqual(len(imports), 1)
             self.assertEqual(imports[0].records[0]["text"], "line\n")
 
+    def test_extract_parquet_requires_optional_reader(self):
+        with self.assertRaises(UnsupportedKindError):
+            extract_text(b"not parquet", "parquet", source_id="sha")
+
     def test_extract_text_unknown_kind(self):
         with self.assertRaises(UnsupportedKindError):
             extract_text(b"x", "binary", source_id="sha")

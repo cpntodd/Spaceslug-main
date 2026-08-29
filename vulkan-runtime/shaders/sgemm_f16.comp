@@ -1,0 +1,122 @@
+#version 450
+
+// sgemm_f16: C[M x N] = A[M x K] * B^T[N x K]^T, fp16 storage, fp32 accum.
+//
+// Layout (mirrors cactus_matmul_f16): A row-major [M][K]; B PRE-TRANSPOSED
+// [N][K] (B[n][k] is the original B[k][n]). C row-major [M][N]. So
+//   C[m][n] = sum_k A[m][k] * B_t[n][k].
+//
+// 64x64 output tile, 256 threads (16x16 grid = 4 wave64 on gfx803). Each
+// thread owns a 4x4 micro-tile (16 fp32 accumulators). K streams in BK=32
+// chunks; the A tile (64x32) and B tile (64x32, n x k) are staged in LDS.
+//
+// gfx803 rules: LDS = 2 * (64 * 34 floats) = 17408 B < 32 KB; row stride 34
+// (== 2 mod 32) avoids bank conflicts; fp32 FMA only.
+//
+// Host contract: M % 64 == 0, N % 64 == 0, K % 32 == 0.
+
+#define BM 64
+#define BN 64
+#define BK 32
+#define APAD 34
+#define BPAD 34
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A { uint a[]; }; // [M][K]
+layout(std430, binding = 1) readonly  buffer B { uint b[]; }; // [N][K] pre-transposed
+layout(std430, binding = 2) writeonly buffer C { uint c[]; }; // [M][N]
+
+layout(push_constant) uniform PC {
+    uint M;
+    uint N;
+    uint K;
+} pc;
+
+shared float sa[BM * APAD]; // A tile: 64 x 32
+shared float sb[BN * BPAD]; // B tile: 64 x 32 (n x k)
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+uint  f16_store(float f) { return packHalf2x16(vec2(f, 0.0)); }
+
+void main() {
+    uint tx = gl_LocalInvocationID.x; // 0..15
+    uint ty = gl_LocalInvocationID.y; // 0..15
+    uint tid = ty * 16u + tx;
+
+    uint tile_m = gl_WorkGroupID.y;
+    uint tile_n = gl_WorkGroupID.x;
+    uint gm = tile_m * BM;
+    uint gn = tile_n * BN;
+
+    uint r0 = ty * 4u;
+    uint c0 = tx * 4u;
+
+    vec4 acc[4];
+    acc[0] = vec4(0.0);
+    acc[1] = vec4(0.0);
+    acc[2] = vec4(0.0);
+    acc[3] = vec4(0.0);
+
+    for (uint k0 = 0u; k0 < pc.K; k0 += BK) {
+        // stage A tile (BM x BK): 2048 elems / 256 threads = 8 each
+        for (uint r = 0u; r < 8u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BK; // 0..63
+            uint col = idx % BK; // 0..31
+            sa[row * APAD + col] = f16_load(a[(gm + row) * pc.K + (k0 + col)]);
+        }
+
+        // stage B tile (BN x BK) from pre-transposed B[N][K]: 8 each
+        for (uint r = 0u; r < 8u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BK; // n_local 0..63
+            uint col = idx % BK; // k_local 0..31
+            sb[row * BPAD + col] = f16_load(b[(gn + row) * pc.K + (k0 + col)]);
+        }
+
+        barrier();
+
+        for (uint k = 0u; k < BK; k += 2u) {
+            vec2 a0 = vec2(sa[(r0 + 0u) * APAD + k], sa[(r0 + 0u) * APAD + k + 1u]);
+            vec2 a1 = vec2(sa[(r0 + 1u) * APAD + k], sa[(r0 + 1u) * APAD + k + 1u]);
+            vec2 a2 = vec2(sa[(r0 + 2u) * APAD + k], sa[(r0 + 2u) * APAD + k + 1u]);
+            vec2 a3 = vec2(sa[(r0 + 3u) * APAD + k], sa[(r0 + 3u) * APAD + k + 1u]);
+
+            vec4 bk0 = vec4(sb[(c0 + 0u) * BPAD + k], sb[(c0 + 1u) * BPAD + k],
+                            sb[(c0 + 2u) * BPAD + k], sb[(c0 + 3u) * BPAD + k]);
+            vec4 bk1 = vec4(sb[(c0 + 0u) * BPAD + k + 1u], sb[(c0 + 1u) * BPAD + k + 1u],
+                            sb[(c0 + 2u) * BPAD + k + 1u], sb[(c0 + 3u) * BPAD + k + 1u]);
+
+            acc[0] += bk0 * a0.xxxx;
+            acc[0] += bk1 * a0.yyyy;
+            acc[1] += bk0 * a1.xxxx;
+            acc[1] += bk1 * a1.yyyy;
+            acc[2] += bk0 * a2.xxxx;
+            acc[2] += bk1 * a2.yyyy;
+            acc[3] += bk0 * a3.xxxx;
+            acc[3] += bk1 * a3.yyyy;
+        }
+
+        barrier();
+    }
+
+    uint crow0 = gm + r0;
+    uint ccol0 = gn + c0;
+    c[(crow0 + 0u) * pc.N + ccol0 + 0u] = f16_store(acc[0].x);
+    c[(crow0 + 0u) * pc.N + ccol0 + 1u] = f16_store(acc[0].y);
+    c[(crow0 + 0u) * pc.N + ccol0 + 2u] = f16_store(acc[0].z);
+    c[(crow0 + 0u) * pc.N + ccol0 + 3u] = f16_store(acc[0].w);
+    c[(crow0 + 1u) * pc.N + ccol0 + 0u] = f16_store(acc[1].x);
+    c[(crow0 + 1u) * pc.N + ccol0 + 1u] = f16_store(acc[1].y);
+    c[(crow0 + 1u) * pc.N + ccol0 + 2u] = f16_store(acc[1].z);
+    c[(crow0 + 1u) * pc.N + ccol0 + 3u] = f16_store(acc[1].w);
+    c[(crow0 + 2u) * pc.N + ccol0 + 0u] = f16_store(acc[2].x);
+    c[(crow0 + 2u) * pc.N + ccol0 + 1u] = f16_store(acc[2].y);
+    c[(crow0 + 2u) * pc.N + ccol0 + 2u] = f16_store(acc[2].z);
+    c[(crow0 + 2u) * pc.N + ccol0 + 3u] = f16_store(acc[2].w);
+    c[(crow0 + 3u) * pc.N + ccol0 + 0u] = f16_store(acc[3].x);
+    c[(crow0 + 3u) * pc.N + ccol0 + 1u] = f16_store(acc[3].y);
+    c[(crow0 + 3u) * pc.N + ccol0 + 2u] = f16_store(acc[3].z);
+    c[(crow0 + 3u) * pc.N + ccol0 + 3u] = f16_store(acc[3].w);
+}

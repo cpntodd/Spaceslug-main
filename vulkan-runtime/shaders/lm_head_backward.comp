@@ -1,0 +1,23 @@
+#version 450
+// dP[M,H] = dLogits[M,V] * W[V,H], row-major. W is LM-head transpose layout [H,V].
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer DLogitsBuffer { float dlogits[]; };
+layout(std430, binding = 1) readonly buffer WeightBuffer { float weight[]; };
+layout(std430, binding = 2) writeonly buffer DProjectedBuffer { float dprojected[]; };
+layout(push_constant) uniform PC {
+    uint rows;
+    uint vocab;
+    uint hidden;
+    uint logits_stride;
+    uint weight_stride;
+    uint output_stride;
+} pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.rows * pc.hidden) return;
+    uint row = id / pc.hidden;
+    uint channel = id % pc.hidden;
+    float value = 0.0;
+    for (uint token = 0u; token < pc.vocab; ++token) value += dlogits[row * pc.logits_stride + token] * weight[channel * pc.weight_stride + token];
+    dprojected[row * pc.output_stride + channel] = value;
+}

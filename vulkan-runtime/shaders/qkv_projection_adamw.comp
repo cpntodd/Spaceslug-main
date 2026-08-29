@@ -1,0 +1,25 @@
+#version 450
+layout(local_size_x=256) in;
+layout(std430,binding=0) buffer WQ { float wq[]; };
+layout(std430,binding=1) buffer WK { float wk[]; };
+layout(std430,binding=2) buffer WV { float wv[]; };
+layout(std430,binding=3) readonly buffer GQ { float gq[]; };
+layout(std430,binding=4) readonly buffer GK { float gk[]; };
+layout(std430,binding=5) readonly buffer GV { float gv[]; };
+layout(std430,binding=6) buffer MBuffer { float m[]; };
+layout(std430,binding=7) buffer VBuffer { float v[]; };
+layout(push_constant) uniform PC { uint count; uint hidden; uint step; float learning_rate; float beta1; float beta2; float epsilon; float weight_decay; } pc;
+void main(){
+    uint id=gl_GlobalInvocationID.x, n=pc.hidden*pc.hidden;
+    if(id>=pc.count)return;
+    uint projection=id/n, e=id%n;
+    float g=projection==0u?gq[e]:(projection==1u?gk[e]:gv[e]);
+    uint state=projection*n+e;
+    float mm=m[state]=pc.beta1*m[state]+(1.0-pc.beta1)*g;
+    float vv=v[state]=pc.beta2*v[state]+(1.0-pc.beta2)*g*g;
+    float bc1=1.0-pow(pc.beta1,float(pc.step));
+    float bc2=1.0-pow(pc.beta2,float(pc.step));
+    float old=projection==0u?wq[e]:(projection==1u?wk[e]:wv[e]);
+    float updated=(1.0-pc.learning_rate*pc.weight_decay)*old-pc.learning_rate*(mm/bc1)/(sqrt(vv/bc2)+pc.epsilon);
+    if(projection==0u)wq[e]=updated; else if(projection==1u)wk[e]=updated; else wv[e]=updated;
+}

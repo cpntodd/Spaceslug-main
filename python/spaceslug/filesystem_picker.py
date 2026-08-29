@@ -13,7 +13,7 @@ class FileSelection:
     skipped: tuple[Path, ...]
 
 
-def pick_files(root: str | Path, *, recursive: bool = True, extensions: tuple[str, ...] = (".txt", ".md", ".json", ".jsonl", ".pdf"), max_bytes: int = 16 * 1024 * 1024, exclude: tuple[str, ...] = (".git", ".venv")) -> FileSelection:
+def pick_files(root: str | Path, *, recursive: bool = True, extensions: tuple[str, ...] = (".txt", ".md", ".json", ".jsonl", ".pdf", ".parquet"), max_bytes: int = 16 * 1024 * 1024, exclude: tuple[str, ...] = (".git", ".venv")) -> FileSelection:
     root = Path(root).expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(root)

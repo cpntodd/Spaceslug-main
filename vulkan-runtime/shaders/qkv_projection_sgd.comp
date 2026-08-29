@@ -1,0 +1,11 @@
+#version 450
+// Graph-owned FP32 Q/K/V SGD update.
+layout(local_size_x=256) in;
+layout(std430,binding=0) buffer WQ { float wq[]; };
+layout(std430,binding=1) buffer WK { float wk[]; };
+layout(std430,binding=2) buffer WV { float wv[]; };
+layout(std430,binding=3) readonly buffer GQ { float gq[]; };
+layout(std430,binding=4) readonly buffer GK { float gk[]; };
+layout(std430,binding=5) readonly buffer GV { float gv[]; };
+layout(push_constant) uniform PC { uint count; float learning_rate; } pc;
+void main(){uint id=gl_GlobalInvocationID.x;if(id>=pc.count)return;uint n=pc.count/3u,e=id%(pc.count/3u),m=id/(pc.count/3u);if(m==0u)wq[e]-=pc.learning_rate*gq[e];else if(m==1u)wk[e]-=pc.learning_rate*gk[e];else wv[e]-=pc.learning_rate*gv[e];}

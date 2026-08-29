@@ -1,0 +1,30 @@
+#version 450
+// Bounded FFN forward primitive: y = x + GELU(x W1 + b1) W2 + b2.
+// Row-major FP32 buffers; intentionally scalar and correctness-first.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer X { float x[]; };
+layout(std430, binding = 1) readonly buffer W1 { float w1[]; };
+layout(std430, binding = 2) readonly buffer B1 { float b1[]; };
+layout(std430, binding = 3) readonly buffer W2 { float w2[]; };
+layout(std430, binding = 4) readonly buffer B2 { float b2[]; };
+layout(std430, binding = 5) writeonly buffer Y { float y[]; };
+layout(std430, binding = 6) readonly buffer Mask { uint mask[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; uint intermediate; } pc;
+const float kSqrt2OverPi = 0.7978845608028654;
+float gelu(float z) { return 0.5 * z * (1.0 + tanh(kSqrt2OverPi * (z + 0.044715 * z * z * z))); }
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint count = pc.rows * pc.hidden;
+    if (id >= count) return;
+    uint row = id / pc.hidden, out_col = id % pc.hidden;
+    if (mask[row] == 0u) { y[id] = 0.0; return; }
+    uint xbase = row * pc.hidden;
+    float result = b2[out_col] + x[xbase + out_col];
+    for (uint j = 0u; j < pc.intermediate; ++j) {
+        float z = b1[j];
+        for (uint i = 0u; i < pc.hidden; ++i) z += x[xbase + i] * w1[i * pc.intermediate + j];
+        float a = gelu(z);
+        result += a * w2[j * pc.hidden + out_col];
+    }
+    y[id] = result;
+}

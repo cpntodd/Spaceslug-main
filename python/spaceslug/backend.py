@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import ctypes
+import math
 import json
 from pathlib import Path
 import subprocess
@@ -201,6 +202,10 @@ class BackendSession:
                     function = self._library.spaceslug_tiny_forward_train_dataset_batch
                     function.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_float, ctypes.c_float]
                     function.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_train_dataset_batch_full"):
+                    function = self._library.spaceslug_tiny_forward_train_dataset_batch_full
+                    function.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_float, ctypes.c_float]
+                    function.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state"):
                     readback_lm_head_adamw = self._library.spaceslug_tiny_forward_readback_base_train_lm_head_adamw_state
                     readback_lm_head_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint64)]
@@ -224,6 +229,26 @@ class BackendSession:
                     train_embeddings_sgd = self._library.spaceslug_tiny_forward_train_embeddings_sgd
                     train_embeddings_sgd.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float]
                     train_embeddings_sgd.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_train_positions_sgd"):
+                    train_positions_sgd = self._library.spaceslug_tiny_forward_train_positions_sgd
+                    train_positions_sgd.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float]
+                    train_positions_sgd.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_train_positions_adamw"):
+                    train_positions_adamw = self._library.spaceslug_tiny_forward_train_positions_adamw
+                    train_positions_adamw.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+                    train_positions_adamw.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_readback_base_train_positions_adamw_state"):
+                    readback_positions_adamw = self._library.spaceslug_tiny_forward_readback_base_train_positions_adamw_state
+                    readback_positions_adamw.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 3 + [ctypes.POINTER(ctypes.c_uint64)]
+                    readback_positions_adamw.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_update_base_train_positions_adamw_state"):
+                    update_positions_adamw = self._library.spaceslug_tiny_forward_update_base_train_positions_adamw_state
+                    update_positions_adamw.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 3 + [ctypes.c_uint64]
+                    update_positions_adamw.restype = ctypes.c_int
+                if hasattr(self._library, "spaceslug_tiny_forward_readback_positions"):
+                    readback_positions = self._library.spaceslug_tiny_forward_readback_positions
+                    readback_positions.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+                    readback_positions.restype = ctypes.c_int
                 if hasattr(self._library, "spaceslug_tiny_forward_graph_embedding_training_capability"):
                     graph_embedding_capability = self._library.spaceslug_tiny_forward_graph_embedding_training_capability
                     graph_embedding_capability.argtypes = []
@@ -413,7 +438,7 @@ class BackendSession:
                     dataset_batch_capability = native.vulkan_runtime_dataset_batch_capability().decode("utf-8")
             except (BackendError, AttributeError):
                 pass
-        from .native_training import integrated_tiny_embedding_sgd_capability, integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, native_fp32_lm_head_capability
+        from .native_training import integrated_tiny_embedding_sgd_capability, integrated_tiny_group_adamw_capability, integrated_tiny_lm_head_adamw_capability, integrated_tiny_lm_head_capability, integrated_tiny_positions_sgd_capability, native_fp32_lm_head_capability
         native_fp32_base_training = native_fp32_lm_head_capability()
         graph_lm_head = False
         graph_lm_head_capability = None
@@ -426,6 +451,7 @@ class BackendSession:
         graph_qkv_adamw = False
         graph_dstate = False
         graph_embedding_training = False
+        graph_positions_training = False
         graph_dstate_capability = None
         graph_dstate_status = None
         if self._library_path.is_file():
@@ -440,6 +466,7 @@ class BackendSession:
                 graph_lm_head_training_methods = hasattr(native, "spaceslug_tiny_forward_train_lm_head_sgd")
                 graph_output_training_methods = hasattr(native, "spaceslug_tiny_forward_train_output_sgd")
                 graph_qkv_training_methods = hasattr(native, "spaceslug_tiny_forward_train_qkv_sgd")
+                graph_positions_training = hasattr(native, "spaceslug_tiny_forward_train_positions_sgd")
                 graph_embedding_training = hasattr(native, "spaceslug_tiny_forward_train_embeddings_sgd")
                 graph_output_adamw = all(hasattr(native, name) for name in (
                 "spaceslug_tiny_forward_train_output_adamw",
@@ -491,6 +518,8 @@ class BackendSession:
                      "tiny_graph_dstate_token_capacity": 128 if graph_dstate else None,
                      "tiny_graph_dstate_float_count": 128 * 64 if graph_dstate else None,
                       "tiny_graph_embedding_training": graph_embedding_training,
+                       "tiny_graph_positions_training": graph_positions_training,
+                       "tiny_graph_integrated_positions_sgd": integrated_tiny_positions_sgd_capability(available=graph_positions_training, runtime_capability=graph_lm_head_capability),
                       "tiny_graph_embedding_training_return_code": 0 if graph_embedding_training else -5,
                       "tiny_graph_integrated_embedding_sgd": integrated_tiny_embedding_sgd_capability(available=graph_embedding_training, runtime_capability=graph_dstate_capability),
                     "tiny_forward_token_count": 128 if native_retained else None,
@@ -948,7 +977,7 @@ class BackendSession:
     def readback_tiny_graph_base_checkpoint(self, handle: ctypes.c_void_p) -> dict[str, Any]:
         """Read the graph-owned base checkpoint ABI into JSON-ready metadata."""
         native = self._native()
-        required = ("spaceslug_tiny_base_checkpoint_create", "spaceslug_tiny_forward_readback_base_checkpoint")
+        required = ("spaceslug_tiny_base_checkpoint_create", "spaceslug_tiny_forward_readback_base_checkpoint", "spaceslug_tiny_base_checkpoint_embeddings", "spaceslug_tiny_base_checkpoint_positions")
         if not all(hasattr(native, name) for name in required):
             raise BackendError("graph-owned base checkpoint ABI unavailable")
         checkpoint = native.spaceslug_tiny_base_checkpoint_create()
@@ -959,12 +988,34 @@ class BackendSession:
             if code != 0:
                 raise BackendError(f"graph-owned base checkpoint readback returned {code}")
             mask = int(native.spaceslug_tiny_base_checkpoint_group_mask(checkpoint))
-            result: dict[str, Any] = {"version": 1, "group_mask": mask,
+            result: dict[str, Any] = {"version": 4, "group_mask": mask,
                 "adamw_step": int(native.spaceslug_tiny_base_checkpoint_adamw_step(checkpoint)),
                 "profile_rank": int(native.spaceslug_tiny_base_checkpoint_profile_rank(checkpoint))}
-            counts = {"lm_head": (1, 64 * 320), "output": (2, 64 * 64), "qkv": (4, 64 * 64)}
-            for group, bit in (("lm_head", 1), ("output", 2), ("qkv", 4)):
+            embedding_count = int(native.spaceslug_tiny_base_checkpoint_embeddings_float_count(checkpoint))
+            position_count = int(native.spaceslug_tiny_base_checkpoint_positions_float_count(checkpoint))
+            embedding_ptr = native.spaceslug_tiny_base_checkpoint_embeddings(checkpoint)
+            position_ptr = native.spaceslug_tiny_base_checkpoint_positions(checkpoint)
+            if embedding_count != 259 * 64 or position_count != 128 * 64 or not embedding_ptr or not position_ptr:
+                raise BackendError("invalid schema-v4 graph checkpoint table payload")
+            if mask & 32 and int(native.spaceslug_tiny_base_checkpoint_float_count(checkpoint, 32)) != 64:
+                raise BackendError("invalid schema-v4 normalization payload")
+            if mask & 64 and int(native.spaceslug_tiny_base_checkpoint_float_count(checkpoint, 64)) != 3 * (64 * 256 + 256 + 256 * 64 + 64):
+                raise BackendError("invalid schema-v4 FFN payload")
+            result["embeddings"] = [embedding_ptr[i] for i in range(embedding_count)]
+            result["positions"] = [position_ptr[i] for i in range(position_count)]
+            counts = {"lm_head": (1, 64 * 320), "output": (2, 64 * 64), "qkv": (4, 64 * 64), "normalization": (32, 64), "ffn": (64, 3 * (64 * 256 + 256 + 256 * 64 + 64))}
+            for group, bit in (("lm_head", 1), ("output", 2), ("qkv", 4), ("normalization", 32), ("ffn", 64)):
                 if not mask & bit:
+                    continue
+                if group == "normalization":
+                    count = int(native.spaceslug_tiny_base_checkpoint_float_count(checkpoint, bit))
+                    pointer = native.spaceslug_tiny_base_checkpoint_weights(checkpoint, bit)
+                    result[group] = [pointer[i] for i in range(count)] if pointer else []
+                    continue
+                if group == "ffn":
+                    count = int(native.spaceslug_tiny_base_checkpoint_float_count(checkpoint, bit))
+                    pointer = native.spaceslug_tiny_base_checkpoint_weights(checkpoint, bit)
+                    result[group] = [pointer[i] for i in range(count)] if pointer else []
                     continue
                 if group == "qkv":
                     result[group] = []
@@ -992,12 +1043,19 @@ class BackendSession:
     def update_tiny_graph_base_checkpoint(self, handle: ctypes.c_void_p, checkpoint: dict[str, Any]) -> None:
         """Restore graph-owned weights and supported AdamW state from metadata."""
         native = self._native()
-        if not all(hasattr(native, name) for name in ("spaceslug_tiny_forward_import_base_train_lm_head", "spaceslug_tiny_forward_import_base_train_output")):
-            raise BackendError("graph-owned base checkpoint restore ABI unavailable")
+        required = ("spaceslug_tiny_forward_import_base_train_lm_head", "spaceslug_tiny_forward_import_base_train_output", "spaceslug_tiny_forward_import_base_train_embeddings", "spaceslug_tiny_forward_import_base_train_positions")
+        if not all(hasattr(native, name) for name in required):
+            raise BackendError("graph-owned schema-v4 base checkpoint restore ABI unavailable")
+        if int(checkpoint.get("version", 0)) != 3 or len(checkpoint.get("embeddings", [])) != 259 * 64 or len(checkpoint.get("positions", [])) != 128 * 64:
+            raise ValueError("invalid schema-v2 graph checkpoint tables")
         mask = int(checkpoint.get("group_mask", 0))
         import array
         def floats(values: list[float]):
             return (ctypes.c_float * len(values))(*values)
+        values = floats(checkpoint["embeddings"]); code = native.spaceslug_tiny_forward_import_base_train_embeddings(handle, values)
+        if code != 0: raise BackendError(f"embedding checkpoint restore returned {code}")
+        values = floats(checkpoint["positions"]); code = native.spaceslug_tiny_forward_import_base_train_positions(handle, values)
+        if code != 0: raise BackendError(f"position checkpoint restore returned {code}")
         if mask & 1 and checkpoint.get("lm_head"):
             values = floats(checkpoint["lm_head"]); code = native.spaceslug_tiny_forward_import_base_train_lm_head(handle, values)
             if code != 0: raise BackendError(f"LM-head checkpoint restore returned {code}")
@@ -1013,6 +1071,26 @@ class BackendSession:
         if mask & 4 and "qkv_m" in checkpoint and "qkv_v" in checkpoint:
             state = {"weight": checkpoint.get("qkv", []), "m": checkpoint["qkv_m"], "v": checkpoint["qkv_v"], "step": int(checkpoint.get("adamw_step", 0))}
             self.update_tiny_graph_qkv_adamw_state(handle, state)
+        if mask & 32:
+            values = checkpoint.get("normalization", [])
+            if len(values) != 64:
+                raise ValueError("invalid normalization checkpoint payload")
+            state_fn = getattr(native, "spaceslug_tiny_forward_update_gamma_state", None)
+            if state_fn is None:
+                raise BackendError("normalization checkpoint restore ABI unavailable")
+            zeros = floats([0.0] * 64)
+            code = state_fn(handle, floats(values), zeros, zeros, int(checkpoint.get("adamw_step", 0)))
+            if code != 0: raise BackendError(f"normalization checkpoint restore returned {code}")
+        if mask & 64:
+            values = checkpoint.get("ffn", [])
+            expected = 3 * (64 * 256 + 256 + 256 * 64 + 64)
+            if len(values) != expected:
+                raise ValueError("invalid FFN checkpoint payload")
+            state_fn = getattr(native, "spaceslug_tiny_forward_update_ffn_state", None)
+            if state_fn is None:
+                raise BackendError("FFN checkpoint restore ABI unavailable")
+            code = state_fn(handle, floats(values), len(values), int(checkpoint.get("adamw_step", 0)))
+            if code != 0: raise BackendError(f"FFN checkpoint restore returned {code}")
         for group, count in (("lm_head", 64 * 320), ("output", 64 * 64)):
             if mask & (1 if group == "lm_head" else 2) and all(f"{group}_{key}" in checkpoint for key in ("m", "v")):
                 fn = getattr(native, f"spaceslug_tiny_forward_update_base_train_{group}_adamw_state", None)
@@ -1061,6 +1139,41 @@ class BackendSession:
         code = fn(handle, *pointers, len(tokens), learning_rate)
         if code != 0:
             raise BackendError(f"integrated graph embedding SGD returned {code}")
+
+    def train_tiny_graph_positions_adamw(self, handle, tokens, targets, masks, learning_rate, beta1, beta2, epsilon, weight_decay):
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError("integrated Tiny position AdamW requires equal 1..128 values")
+        if not all(math.isfinite(x) for x in (learning_rate, beta1, beta2, epsilon, weight_decay)) or learning_rate <= 0 or not (0 <= beta1 < 1) or not (0 <= beta2 < 1) or epsilon <= 0 or weight_decay < 0:
+            raise ValueError("invalid positional AdamW controls")
+        if any(x < 0 or x >= 259 for x in tokens + targets) or any(x not in (0, 1) for x in masks):
+            raise ValueError("invalid tokens, targets, or masks")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_positions_adamw", None)
+        if fn is None: raise BackendError("integrated graph position AdamW ABI unavailable")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, len(tokens), learning_rate, beta1, beta2, epsilon, weight_decay)
+        if code != 0: raise BackendError(f"integrated graph position AdamW returned {code}")
+
+    def train_tiny_graph_positions_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
+        """Run optional graph-owned positional-table SGD; datasets stay host-owned."""
+        if not tokens or len(tokens) != len(targets) or len(tokens) != len(masks) or len(tokens) > 128:
+            raise ValueError("integrated Tiny position SGD requires equal 1..128 token/target/mask values")
+        if not math.isfinite(learning_rate) or learning_rate <= 0.0:
+            raise ValueError("learning_rate must be finite and positive")
+        if any(token < 0 or token >= 259 for token in tokens) or any(target < 0 or target >= 259 for target in targets):
+            raise ValueError("tokens and targets must be in [0, 259)")
+        if any(mask not in (0, 1) for mask in masks):
+            raise ValueError("masks must contain only 0 or 1")
+        fn = getattr(self._native(), "spaceslug_tiny_forward_train_positions_sgd", None)
+        if fn is None:
+            raise BackendError("integrated graph position SGD ABI unavailable (return code -5)")
+        import array
+        arrays = [array.array("I", values) for values in (tokens, targets, masks)]
+        pointers = [(ctypes.c_uint32 * len(values)).from_buffer(values) for values in arrays]
+        code = fn(handle, *pointers, len(tokens), learning_rate)
+        if code != 0:
+            raise BackendError(f"integrated graph position SGD returned {code}")
 
     def train_tiny_graph_lm_head_sgd(self, handle: ctypes.c_void_p, tokens: list[int], targets: list[int], masks: list[int], learning_rate: float) -> None:
         """Run one graph-owned Tiny LM-head SGD step when the runtime exports it."""

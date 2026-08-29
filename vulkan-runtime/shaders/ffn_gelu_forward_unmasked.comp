@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer X{float x[];};
+layout(std430,binding=1) readonly buffer W1{float w1[];};
+layout(std430,binding=2) readonly buffer B1{float b1[];};
+layout(std430,binding=3) readonly buffer W2{float w2[];};
+layout(std430,binding=4) readonly buffer B2{float b2[];};
+layout(std430,binding=5) writeonly buffer Y{float y[];};
+layout(push_constant) uniform PC{uint rows;uint hidden;uint intermediate;}pc;
+float gelu(float z){const float a=.7978845608028654;return .5*z*(1.+tanh(a*(z+.044715*z*z*z)));}
+void main(){uint id=gl_GlobalInvocationID.x;if(id>=pc.rows*pc.hidden)return;uint r=id/pc.hidden,o=id%pc.hidden,b=r*pc.hidden;float outv=x[b+o]+b2[o];for(uint j=0;j<pc.intermediate;++j){float z=b1[j];for(uint i=0;i<pc.hidden;++i)z+=x[b+i]*w1[i*pc.intermediate+j];outv+=gelu(z)*w2[j*pc.hidden+o];}y[id]=outv;}

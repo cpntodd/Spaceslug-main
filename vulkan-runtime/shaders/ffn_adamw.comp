@@ -1,0 +1,6 @@
+#version 450
+// Deterministic FFN AdamW; one invocation per flattened parameter group.
+layout(local_size_x=256) in;
+layout(std430,binding=0) buffer W{float w[];};layout(std430,binding=1) readonly buffer G{float g[];};layout(std430,binding=2) buffer M{float m[];};layout(std430,binding=3) buffer V{float v[];};
+layout(push_constant) uniform PC{uint count;uint step;float lr;float beta1;float beta2;float eps;float decay;}pc;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=pc.count)return;float gi=g[i];float mi=pc.beta1*m[i]+(1.-pc.beta1)*gi;float vi=pc.beta2*v[i]+(1.-pc.beta2)*gi*gi;m[i]=mi;v[i]=vi;float c1=1.-pow(pc.beta1,float(pc.step)),c2=1.-pow(pc.beta2,float(pc.step));w[i]=(1.-pc.lr*pc.decay)*w[i]-pc.lr*(mi/c1)/(sqrt(vi/c2)+pc.eps);}

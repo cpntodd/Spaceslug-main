@@ -1,0 +1,8 @@
+#version 450
+// Position gradient from true RMSNorm dx. Trailing/all-masked rows are zero.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer DX { float dx[]; };
+layout(std430,binding=1) readonly buffer Mask { uint mask[]; };
+layout(std430,binding=2) writeonly buffer Gradient { float gradient[]; };
+layout(push_constant) uniform PC { uint hidden; uint rows; } pc;
+void main(){uint id=gl_GlobalInvocationID.x;if(id>=pc.rows*pc.hidden)return;uint row=id/pc.hidden;gradient[id]=mask[row]!=0u?dx[id]:0.0;}

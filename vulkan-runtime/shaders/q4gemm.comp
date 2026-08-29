@@ -1,0 +1,175 @@
+#version 450
+
+// q4gemm: C[M x N] = A[M x K] * dequant(B), where A is fp32 (row-major) and B
+// is K x N int4 (Q4_0-style symmetric, no zero point), packed 2-per-byte, with
+// a per-32-K-group fp32 scale. fp32 math throughout; int4 is STORAGE only.
+//
+// Weight layout (packed + scales) -- MUST match tests/test_q4gemm.cpp and
+// bench/bench_q4gemm.cpp exactly:
+//   - Each int4 value v in [-8, 7] is stored as a 4-bit two's-complement
+//     nibble: v & 0xF  (so -8 -> 0x8, -1 -> 0xF, 0 -> 0x0, 7 -> 0x7).
+//   - LSB-FIRST packing: within one packed byte, bits 0..3 (low nibble) hold
+//     the int4 for even k, bits 4..7 (high nibble) hold the int4 for odd k.
+//   - Logical packed-byte index for value (k, n):  pb = n * (K/2) + (k >> 1).
+//     i.e. column-major: K is the inner (packed) dimension, N the outer.
+//   - Bytes are stored 4-per-uint32 in the `packed` SSBO, little-endian lane
+//     order: byte pb lives in word (pb >> 2), lane (pb & 3), bits lane*8.
+//   - One fp32 scale covers 32 consecutive K values of one column. The scale
+//     for (k, n) is scales[n * (K/32) + (k/32)]. numGroupsK = K/32.
+//   - Dequant:  b = int4_value(k, n) * scale(n, k/32).
+//
+// Structure mirrors sgemm.comp: 64x64 output tile, 256 threads (4 wave64 on
+// gfx803/Polaris), 16 accumulators/thread, BK=32 K-chunk. The only delta vs
+// sgemm is the B-tile load: instead of staging fp32 B from a row-major buffer
+// we read packed bytes + scales and dequantize on the fly into the fp32 LDS
+// tile. Dequant is ~2048 ops vs ~131072 FMAs per chunk (~1.5%), so the inner
+// loop stays pure FMA, identical to sgemm.
+//
+// gfx803 (Polaris) rules:
+//   - wave64 only: 256 threads = 4 waves (multiple of 64).
+//   - LDS <= 32 KB/workgroup. Here: A 64*34 + B 32*66 = 8704 + 8448 = 17152 B.
+//   - LDS row stride == 2 (mod 32) floats (34, 66) to avoid bank conflicts.
+//   - fp32 FMA only (no packed fp16, no coop matrices). The inner loop is
+//     written as `acc += bk * a` (mul+add): glslc -O emits OpFMul + OpFAdd and
+//     RADV's ACO backend fuses them into V_FMA at codegen time.
+//
+// Host contract (asserted on the host, not re-checked here so the body stays
+// branch-free): M % 64 == 0, N % 64 == 0, K % 32 == 0.
+
+#define BM 64   // tile rows (M dimension)
+#define BN 64   // tile cols (N dimension)
+#define BK 32   // K chunk (== the scale group size)
+#define APAD 34 // A LDS row stride: BM-tile width BK + 2 (== 2 mod 32)
+#define BPAD 66 // B LDS row stride: BK rows x (BN+2) cols (== 2 mod 32)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A      { float a[]; };     // M x K
+layout(std430, binding = 1) readonly  buffer Packed { uint  packed[]; }; // K*N/2 packed bytes
+layout(std430, binding = 2) readonly  buffer Scales { float scales[]; }; // N * (K/32)
+layout(std430, binding = 3) writeonly buffer C      { float c[]; };     // M x N
+
+layout(push_constant) uniform PC {
+    uint M; // rows of C / A
+    uint N; // cols of C / B
+    uint K; // inner dim
+} pc;
+
+shared float sa[BM * APAD]; // 64 * 34 = 2176 floats (8704 B)
+shared float sb[BK * BPAD]; // 32 * 66 = 2112 floats (8448 B)
+
+void main() {
+    uint tx = gl_LocalInvocationID.x; // 0..15 -> tile column group
+    uint ty = gl_LocalInvocationID.y; // 0..15 -> tile row group
+    uint tid = ty * 16u + tx;         // 0..255
+
+    uint tile_m = gl_WorkGroupID.y;
+    uint tile_n = gl_WorkGroupID.x;
+
+    uint gm = tile_m * BM; // global M offset of this tile
+    uint gn = tile_n * BN; // global N offset of this tile
+
+    uint r0 = ty * 4u; // local row of this thread's micro-tile
+    uint c0 = tx * 4u; // local col of this thread's micro-tile
+
+    uint numGroupsK = pc.K / 32u; // scale groups per column
+    uint kBytes     = pc.K / 2u;  // packed bytes per column
+
+    // 16 accumulators (4 rows x 4 cols), resident in VGPRs.
+    vec4 acc[4];
+    acc[0] = vec4(0.0);
+    acc[1] = vec4(0.0);
+    acc[2] = vec4(0.0);
+    acc[3] = vec4(0.0);
+
+    for (uint k0 = 0u; k0 < pc.K; k0 += BK) {
+        // ---- stage A tile (BM x BK) from global A (M x K row-major) ----
+        // 64*32 = 2048 elements; 256 threads -> 8 each.
+        for (uint r = 0u; r < 8u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BK; // 0..63
+            uint col = idx % BK; // 0..31
+            sa[row * APAD + col] = a[(gm + row) * pc.K + (k0 + col)];
+        }
+
+        // ---- stage B tile (BK x BN): dequant packed int4 -> fp32 LDS ----
+        // 32*64 = 2048 int4 elements; 256 threads -> 8 each.
+        for (uint r = 0u; r < 8u; ++r) {
+            uint idx  = tid + r * 256u;
+            uint krow = idx / BN; // 0..31  (local k within the chunk)
+            uint ncol = idx % BN; // 0..63  (local n within the tile)
+            uint gk   = k0 + krow;      // global k
+            uint gn2  = gn + ncol;      // global n
+
+            // packed byte index (column-major): n * (K/2) + k/2
+            uint pb   = gn2 * kBytes + (gk >> 1u);
+            uint word = packed[pb >> 2u];
+            uint byteVal = (word >> ((pb & 3u) * 8u)) & 0xFFu;
+
+            // LSB-first: even k -> low nibble, odd k -> high nibble.
+            uint nib;
+            if ((gk & 1u) == 0u) {
+                nib = byteVal & 0xFu;
+            } else {
+                nib = byteVal >> 4u;
+            }
+            // Sign-extend the 4-bit two's-complement nibble to [-8, 7].
+            int v = (nib >= 8u) ? int(nib) - 16 : int(nib);
+
+            // Scale for the 32-K group this k belongs to (k0/32 is the group
+            // index for every k in this chunk, since BK == 32).
+            float scale = scales[gn2 * numGroupsK + (k0 / 32u)];
+            sb[krow * BPAD + ncol] = float(v) * scale;
+        }
+
+        barrier(); // LDS writes visible to all threads before compute
+
+        // ---- compute: 4x4 micro-tile, vec2 A loads + vec4 B loads + FMA ----
+        for (uint k = 0u; k < BK; k += 2u) {
+            vec2 a0 = vec2(sa[(r0 + 0u) * APAD + k], sa[(r0 + 0u) * APAD + k + 1u]);
+            vec2 a1 = vec2(sa[(r0 + 1u) * APAD + k], sa[(r0 + 1u) * APAD + k + 1u]);
+            vec2 a2 = vec2(sa[(r0 + 2u) * APAD + k], sa[(r0 + 2u) * APAD + k + 1u]);
+            vec2 a3 = vec2(sa[(r0 + 3u) * APAD + k], sa[(r0 + 3u) * APAD + k + 1u]);
+
+            vec4 bk = vec4(sb[(k + 0u) * BPAD + c0 + 0u],
+                           sb[(k + 0u) * BPAD + c0 + 1u],
+                           sb[(k + 0u) * BPAD + c0 + 2u],
+                           sb[(k + 0u) * BPAD + c0 + 3u]);
+            vec4 bk1 = vec4(sb[(k + 1u) * BPAD + c0 + 0u],
+                            sb[(k + 1u) * BPAD + c0 + 1u],
+                            sb[(k + 1u) * BPAD + c0 + 2u],
+                            sb[(k + 1u) * BPAD + c0 + 3u]);
+
+            acc[0] += bk * a0.xxxx;
+            acc[0] += bk1 * a0.yyyy;
+            acc[1] += bk * a1.xxxx;
+            acc[1] += bk1 * a1.yyyy;
+            acc[2] += bk * a2.xxxx;
+            acc[2] += bk1 * a2.yyyy;
+            acc[3] += bk * a3.xxxx;
+            acc[3] += bk1 * a3.yyyy;
+        }
+
+        barrier(); // all threads done reading LDS before next chunk overwrites
+    }
+
+    // ---- store C micro-tile (4x4) ----
+    uint crow0 = gm + r0;
+    uint ccol0 = gn + c0;
+    c[(crow0 + 0u) * pc.N + ccol0] = acc[0].x;
+    c[(crow0 + 0u) * pc.N + ccol0 + 1u] = acc[0].y;
+    c[(crow0 + 0u) * pc.N + ccol0 + 2u] = acc[0].z;
+    c[(crow0 + 0u) * pc.N + ccol0 + 3u] = acc[0].w;
+    c[(crow0 + 1u) * pc.N + ccol0] = acc[1].x;
+    c[(crow0 + 1u) * pc.N + ccol0 + 1u] = acc[1].y;
+    c[(crow0 + 1u) * pc.N + ccol0 + 2u] = acc[1].z;
+    c[(crow0 + 1u) * pc.N + ccol0 + 3u] = acc[1].w;
+    c[(crow0 + 2u) * pc.N + ccol0] = acc[2].x;
+    c[(crow0 + 2u) * pc.N + ccol0 + 1u] = acc[2].y;
+    c[(crow0 + 2u) * pc.N + ccol0 + 2u] = acc[2].z;
+    c[(crow0 + 2u) * pc.N + ccol0 + 3u] = acc[2].w;
+    c[(crow0 + 3u) * pc.N + ccol0] = acc[3].x;
+    c[(crow0 + 3u) * pc.N + ccol0 + 1u] = acc[3].y;
+    c[(crow0 + 3u) * pc.N + ccol0 + 2u] = acc[3].z;
+    c[(crow0 + 3u) * pc.N + ccol0 + 3u] = acc[3].w;
+}

@@ -1,0 +1,34 @@
+name: GPU or model proposal
+description: Propose a backend, GPU target, model family, tokenizer, or adapter.
+title: "[Proposal] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like to add, and who would it help?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - GPU/backend
+        - Vulkan kernel/runtime
+        - Model/tokenizer
+        - Adapter/quantization
+        - Documentation/experiment
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or starting point
+      description: Link hardware, model documentation, benchmarks, prototypes, or related issues.
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and open questions
+      description: Include licensing, memory, precision, compatibility, or validation concerns.

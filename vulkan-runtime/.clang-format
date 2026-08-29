@@ -1,0 +1,35 @@
+# clang-format configuration for vulkan-runtime (C++20)
+# Style: LLVM base, tuned to 4-space indent / 120 cols
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+Standard: c++20
+
+# Keep declarations/short functions readable
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+SortIncludes: CaseSensitive
+
+# Space in control statements (if (x) — not if(x))
+SpaceAfterControlStatementKeyword: true
+SpaceBeforeParens: ControlStatements
+
+# Pointer/reference alignment: left (int* p)
+PointerAlignment: Left
+
+# Constructor initializer list
+ConstructorInitializerIndentWidth: 4
+BinPackArguments: false
+BinPackParameters: false
+
+# Lambdas
+AllowAllParametersOfDeclarationOnNextLine: false
+
+# Namespaces: don't indent namespace body
+NamespaceIndentation: None
+
+# Tab handling
+UseTab: Never
+TabWidth: 4

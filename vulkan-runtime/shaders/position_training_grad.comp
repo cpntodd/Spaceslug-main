@@ -1,0 +1,13 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer DState { float dstate[]; };
+layout(std430, binding = 1) readonly buffer Mask { uint mask[]; };
+layout(std430, binding = 2) readonly buffer Gamma { float gamma[]; };
+layout(std430, binding = 3) writeonly buffer Gradient { float gradient[]; };
+layout(push_constant) uniform PC { uint hidden; uint rows; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.rows * pc.hidden) return;
+    uint row = id / pc.hidden;
+    gradient[id] = mask[row] != 0u ? dstate[id] * gamma[id % pc.hidden] : 0.0;
+}

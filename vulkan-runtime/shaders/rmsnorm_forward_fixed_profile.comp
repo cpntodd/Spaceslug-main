@@ -1,0 +1,37 @@
+#version 450
+// Fixed-profile post-attention RMSNorm: projected x -> gamma * x / RMS(x).
+// The mask is the row contract: masked rows write zero activations and stats.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer Projected { float projected[]; };
+layout(std430, binding = 1) readonly buffer Gamma { float gamma[]; };
+layout(std430, binding = 2) writeonly buffer Activations { float activations[]; };
+layout(std430, binding = 3) writeonly buffer Raw { float raw[]; };
+layout(std430, binding = 4) writeonly buffer Inv { float inv[]; };
+layout(std430, binding = 5) readonly buffer Mask { uint mask[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; } pc;
+const float EPSILON = 1e-5;
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint col = gl_LocalInvocationID.x;
+    if (row >= pc.rows || col >= pc.hidden) return;
+    uint id = row * pc.hidden + col;
+    uint base = row * pc.hidden;
+    if (mask[row] == 0u) {
+        raw[id] = 0.0;
+        if (col == 0u) inv[row] = 0.0;
+        activations[id] = 0.0;
+        return;
+    }
+    float sum_sq = 0.0;
+    for (uint c = 0u; c < pc.hidden; ++c) {
+        float x = projected[base + c];
+        raw[base + c] = x;
+        sum_sq += x * x;
+    }
+    float r = 1.0 / sqrt(sum_sq / float(pc.hidden) + EPSILON);
+    if (col == 0u) inv[row] = r;
+    activations[id] = projected[id] * r * gamma[col];
+}
+
+// Masked rows intentionally have inv=0; their backward contribution is zero.
+// The duplicate row work is correctness-first for the fixed H=64 profile.

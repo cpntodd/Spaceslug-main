@@ -1,0 +1,22 @@
+#version 450
+// Y[M,64] = X[M,64] * A[64,R] * B[R,64], row-major fp32.
+// 256 lanes = four wave64 waves on gfx803.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer XBuffer { float x[]; };
+layout(std430, binding = 1) readonly buffer ABuffer { float a[]; };
+layout(std430, binding = 2) readonly buffer BBuffer { float b[]; };
+layout(std430, binding = 3) writeonly buffer YBuffer { float y[]; };
+layout(push_constant) uniform PC { uint m; uint rank; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.m * 64u) return;
+    uint row = id / 64u;
+    uint column = id % 64u;
+    float value = 0.0;
+    for (uint r = 0u; r < pc.rank; ++r) {
+        float reduced = 0.0;
+        for (uint k = 0u; k < 64u; ++k) reduced += x[row * 64u + k] * a[k * pc.rank + r];
+        value += reduced * b[r * 64u + column];
+    }
+    y[id] = value;
+}

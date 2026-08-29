@@ -1,0 +1,118 @@
+#version 450
+
+// dequant_w: CQ4 weight -> pre-transposed packed fp16 W' (N x K), row-major
+// [n][k].
+//   W'[n][k] = norm * codebook[idx(n, k)]   (norm folded in per column group)
+//
+// This is the "B pre-transposed" operand for sgemm_f16_am (C = A' x W'), where
+// A' comes from transform_act. Decode matches cactus_x86 EXACTLY:
+//   - non-interleaved: extract_idx_lsb (LSB-first 1/2/3/4-bit)
+//   - interleaved: extract_idx_interleaved_4row (chunk*16 + (row&3)*4 + (sub&3))
+//
+//   mode 0 = hadamard, non-interleaved
+//   mode 1 = hadamard, INTERLEAVED_4ROW (4-bit)
+//   mode 2 = orthogonal (single group spanning K, LSB decode, norm[n])
+//
+// M7a: W' is emitted as PACKED fp16 (2 per uint32; even index = low half, odd
+// index = high half, byte-identical to fp16pack mode 1). Decode math and the
+// fp16 inputs (packed_indices one byte per uint32, codebook/norms one fp16 per
+// uint32) are unchanged — only the OUTPUT storage layout changes.
+//
+// packed indices are stored one byte per uint32 (correctness-first). One thread
+// per output element PAIR (n, k even/odd) — k0 even and k1=k0+1 odd share a
+// group (group_size is even), so the norm is shared and only the index differs.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer PACKED { uint packed[]; }; // one byte per word
+layout(std430, binding = 1) readonly  buffer CB     { uint codebook[]; }; // [2^bits] fp16
+layout(std430, binding = 2) readonly  buffer NORMS  { uint norms[]; };   // [N*num_groups] or [N] fp16
+layout(std430, binding = 3) writeonly buffer W_OUT  { uint w_out[]; };   // [N][K] packed fp16 pre-transposed
+
+layout(push_constant) uniform PC {
+    uint mode; // 0 hadamard, 1 interleaved, 2 orthogonal
+    uint bits;
+    uint K;
+    uint N;
+    uint group_size;
+    uint num_groups;
+} pc;
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+
+uint packed_byte(uint i) { return packed[i]; }
+
+uint extract_idx_lsb(uint base, uint k, uint bits) {
+    if (bits == 4u) return (packed_byte(base + k / 2u) >> ((k & 1u) * 4u)) & 0xFu;
+    if (bits == 2u) return (packed_byte(base + k / 4u) >> ((k & 3u) * 2u)) & 0x3u;
+    if (bits == 1u) return (packed_byte(base + k / 8u) >> (k & 7u)) & 0x1u;
+    if (bits == 3u) {
+        uint bit_pos = k * 3u;
+        uint byte_idx = bit_pos / 8u;
+        uint bit_idx = bit_pos & 7u;
+        uint val = packed_byte(base + byte_idx) >> bit_idx;
+        if (bit_idx > 5u) val |= packed_byte(base + byte_idx + 1u) << (8u - bit_idx);
+        return val & 0x7u;
+    }
+    return 0u;
+}
+
+uint extract_idx_interleaved(uint panel_base, uint row_in_panel, uint k) {
+    uint chunk = k / 8u;
+    uint sub = k & 7u;
+    uint byte = packed_byte(panel_base + chunk * 16u + row_in_panel * 4u + (sub & 3u));
+    return ((sub & 4u) != 0u) ? (byte >> 4u) : (byte & 0xFu);
+}
+
+// decode the codebook index for output element (n, k).
+uint decode_idx(uint n, uint k) {
+    if (pc.mode == 2u) {
+        uint pgb = (pc.K * pc.bits + 7u) / 8u;
+        return extract_idx_lsb(n * pgb, k, pc.bits);
+    } else if (pc.mode == 1u) {
+        uint g = k / pc.group_size;
+        uint kk = k % pc.group_size;
+        uint pgb = (pc.group_size * pc.bits + 7u) / 8u;
+        uint panel_bytes = 4u * pgb;
+        uint panel_base = ((n / 4u) * pc.num_groups + g) * panel_bytes;
+        return extract_idx_interleaved(panel_base, n & 3u, kk);
+    } else {
+        uint g = k / pc.group_size;
+        uint kk = k % pc.group_size;
+        uint pgb = (pc.group_size * pc.bits + 7u) / 8u;
+        return extract_idx_lsb((n * pc.num_groups + g) * pgb, kk, pc.bits);
+    }
+}
+
+// decode the norm for output element (n, k) (k0/k1 share a group, so same norm).
+float decode_norm(uint n, uint k) {
+    if (pc.mode == 2u) {
+        return f16_load(norms[n]);
+    } else {
+        uint g = k / pc.group_size;
+        if (pc.mode == 1u) {
+            uint nb = n / 4u;
+            uint ni = n & 3u;
+            return f16_load(norms[(nb * pc.num_groups + g) * 4u + ni]);
+        }
+        return f16_load(norms[n * pc.num_groups + g]);
+    }
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.N * (pc.K / 2u);
+    if (gid >= total) return;
+
+    uint n = gid / (pc.K / 2u);
+    uint kk = gid % (pc.K / 2u);
+    uint k0 = kk * 2u;  // even
+    uint k1 = k0 + 1u;  // odd (same group: group_size is even)
+
+    float norm = decode_norm(n, k0);
+    float w0 = f16_load(codebook[decode_idx(n, k0)]) * norm;
+    float w1 = f16_load(codebook[decode_idx(n, k1)]) * norm;
+
+    uint ei = n * pc.K + k0; // even
+    w_out[ei >> 1u] = packHalf2x16(vec2(w0, w1));
+}

@@ -33,7 +33,8 @@ class _Backend:
     def close_tiny_persistent(self, handle): self.calls.append("close")
     def readback_tiny_graph_base_checkpoint(self, handle):
         self.calls.append("base_readback")
-        return {"group_mask": 3, "profile_rank": 4, "adamw_step": 2,
+        return {"version": 2, "group_mask": 31, "profile_rank": 4, "adamw_step": 2,
+                 "embeddings": [0.0] * (259 * 64), "positions": [0.0] * (128 * 64),
                 "lm_head": [1.0], "lm_head_m": [0.1], "lm_head_v": [0.2],
                 "output": [2.0], "output_m": [0.3], "output_v": [0.4]}
     def update_tiny_graph_base_checkpoint(self, handle, checkpoint):
@@ -78,13 +79,29 @@ class PersistentTinyTrainerTest(unittest.TestCase):
             trainer.checkpoint_base(path)
             payload = json.loads(open(path).read())
             self.assertEqual(payload["format"], "spaceslug-tiny-graph-base-checkpoint")
+            self.assertEqual(payload["schema_version"], 4)
+            self.assertEqual(len(payload["positions_m"]), 128 * 64)
+            self.assertEqual(len(payload["positions_v"]), 128 * 64)
+            self.assertEqual(len(payload["embeddings"]), 259 * 64)
+            self.assertEqual(len(payload["positions"]), 128 * 64)
             self.assertFalse(payload["dataset_device_resident"])
             self.assertFalse(payload["retained_training"])
             self.assertFalse(payload["qkv_adamw_unsupported"])
             self.assertEqual(payload["qkv_adamw_gradient_source"], "existing-qkv-gradients")
             resumed = PersistentTinyTrainer.resume_base(_Backend(), Model(), Adapter(), path)
-            self.assertIn(("base_restore", 3, False, "existing-qkv-gradients"), resumed.backend.calls)
+            self.assertIn(("base_restore", 31, False, "existing-qkv-gradients"), resumed.backend.calls)
             trainer.close(); resumed.close()
+
+    def test_schema_v2_checkpoint_rejects_incomplete_tables(self):
+        class Model: hidden_size, vocab_size = 64, 259
+        class Adapter: hidden_size, rank = 64, 4
+        with tempfile.TemporaryDirectory() as directory:
+            path = directory + "/bad.json"
+            data = {"format": "spaceslug-tiny-graph-base-checkpoint", "schema_version": 2,
+                    "group_mask": 3, "embeddings": [], "positions": []}
+            with open(path, "w") as stream: json.dump(data, stream)
+            with self.assertRaises(ValueError):
+                PersistentTinyTrainer.resume_base(_Backend(), Model(), Adapter(), path)
 
     def test_fixed_contract_accumulates_then_finalizes(self):
         class Model: hidden_size, vocab_size = 64, 259

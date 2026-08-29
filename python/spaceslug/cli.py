@@ -21,6 +21,7 @@ from .tiny_model import TinyBigramModel
 from .tiny_training import TinyTrainingConfig, save_training_checkpoint, train_tiny
 from .tui import SpaceslugTui
 from .tokenizer import default_tokenizer
+from .stage1_dataset import build_stage1_bundle, import_folder, load_jsonl
 
 
 RUNTIME_ROOT = "/mnt/Data/Projects/Cpntodd_Cactus/vulkan-runtime"
@@ -47,6 +48,16 @@ def parser() -> argparse.ArgumentParser:
     attention_gate.add_argument("--software-vulkan", action="store_true")
     verify = subparsers.add_parser("dataset-verify")
     verify.add_argument("bundle", type=Path)
+    stage1 = subparsers.add_parser("stage1-build")
+    stage1.add_argument("records", type=Path, help="JSONL structured Stage 1 records")
+    stage1_folder = subparsers.add_parser("stage1-import-folder")
+    stage1_folder.add_argument("folder", type=Path)
+    stage1_folder.add_argument("output", type=Path)
+    stage1_folder.add_argument("--dataset-id", default="stage1-tiny-agent")
+    stage1_folder.add_argument("--seed", type=int, default=0)
+    stage1.add_argument("output", type=Path)
+    stage1.add_argument("--dataset-id", default="stage1-tiny-agent")
+    stage1.add_argument("--seed", type=int, default=0)
     train = subparsers.add_parser("tiny-train")
     train.add_argument("checkpoint", type=Path)
     train.add_argument("--steps", type=int, default=20)
@@ -118,6 +129,17 @@ def main() -> int:
             runtime_root=str(args.runtime_root) if args.runtime_root else None,
             runtime_revision=args.runtime_revision,
         )
+    if args.command == "stage1-import-folder":
+        records, import_report = import_folder(args.folder)
+        bundle, report = build_stage1_bundle(args.output, args.dataset_id, records, seed=args.seed, sources=[str(args.folder)])
+        report["import"] = import_report
+        (args.output / "stage1-report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({"dataset": str(bundle.root), "revision": bundle.manifest["revision"], "report": report}, sort_keys=True))
+        return 0
+    if args.command == "stage1-build":
+        bundle, report = build_stage1_bundle(args.output, args.dataset_id, load_jsonl(args.records), seed=args.seed, sources=[str(args.records)])
+        print(json.dumps({"dataset": str(bundle.root), "revision": bundle.manifest["revision"], "report": report}, sort_keys=True))
+        return 0
     if args.command == "dataset-verify":
         bundle = verify_bundle(args.bundle)
         print(f"dataset={bundle.manifest['dataset_id']} revision={bundle.manifest['revision']}")

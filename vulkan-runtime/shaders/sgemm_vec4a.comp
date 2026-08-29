@@ -1,0 +1,168 @@
+#version 450
+
+// sgemm variant V2: vec4 (ds_read_b128) A-operand loads vs the M2 baseline's
+// vec2 (ds_read_b64) A loads.
+//
+// Same 64x64 output tile / 256 threads / 4x4 micro-tile as sgemm.comp, but the
+// K-loop steps by 4 and reads the A tile 4 floats (16 bytes) at a time instead
+// of 2. This halves the A-side LDS-read instruction count (one ds_read_b128
+// per 4 columns vs two ds_read_b64). The B tile is still read as vec4.
+//
+// The catch — stride vs alignment vs bank conflicts:
+//   - ds_read_b128 needs 16-byte-aligned LDS rows => APAD must be a multiple of
+//     4. But the bank-conflict rule wants APAD == 2 (mod 32), and those two are
+//     mutually exclusive (every value == 2 mod 32 is == 2 mod 4). We pick
+//     APAD = 36 (== 0 mod 4, so rows are 16 B aligned; == 4 mod 32), which
+//     maps 16 A rows read by a wave onto 8 distinct banks -> a clean 2-way
+//     conflict (the floor for 16 rows x 4 banks over 32 banks). V0's vec2 A
+//     loads are conflict-free (APAD=34, 16 rows x 2 banks = 32 banks), so this
+//     variant trades wider loads for a predictable 2-way conflict.
+//
+// gfx803 (Polaris) rules:
+//   - wave64: 256 threads = 4 waves.
+//   - LDS <= 32 KB/workgroup. Here: A 64*36 + B 32*66 = 2304 + 2112 = 4416
+//     floats = 17664 B (17.3 KB) — same occupancy class as V0 (3 WGs/CU).
+//   - fp32 FMA only.
+//
+// Host contract: M % 64 == 0, N % 64 == 0, K % 32 == 0.
+
+#define BM 64   // tile rows (M dimension)
+#define BN 64   // tile cols (N dimension)
+#define BK 32   // K chunk
+#define APAD 36 // A LDS row stride: BM-tile width BK + 4 (16 B aligned, 2-way)
+#define BPAD 66 // B LDS row stride: BK rows x (BN+2) cols (== 2 mod 32)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A { float a[]; };
+layout(std430, binding = 1) readonly  buffer B { float b[]; };
+layout(std430, binding = 2) writeonly buffer C { float c[]; };
+
+layout(push_constant) uniform PC {
+    uint M; // rows of C / A
+    uint N; // cols of C / B
+    uint K; // inner dim
+} pc;
+
+shared float sa[BM * APAD]; // 64 * 36 = 2304 floats (9216 B)
+shared float sb[BK * BPAD]; // 32 * 66 = 2112 floats (8448 B)
+
+void main() {
+    uint tx = gl_LocalInvocationID.x; // 0..15 -> tile column group
+    uint ty = gl_LocalInvocationID.y; // 0..15 -> tile row group
+    uint tid = ty * 16u + tx;         // 0..255
+
+    uint tile_m = gl_WorkGroupID.y;
+    uint tile_n = gl_WorkGroupID.x;
+
+    uint gm = tile_m * BM; // global M offset of this tile
+    uint gn = tile_n * BN; // global N offset of this tile
+
+    uint r0 = ty * 4u; // local row of this thread's micro-tile
+    uint c0 = tx * 4u; // local col of this thread's micro-tile
+
+    // 16 accumulators (4 rows x 4 cols), resident in VGPRs.
+    vec4 acc[4];
+    acc[0] = vec4(0.0);
+    acc[1] = vec4(0.0);
+    acc[2] = vec4(0.0);
+    acc[3] = vec4(0.0);
+
+    for (uint k0 = 0u; k0 < pc.K; k0 += BK) {
+        // ---- stage A tile (BM x BK) from global A (M x K row-major) ----
+        // 64*32 = 2048 elements; 256 threads -> 8 each.
+        for (uint r = 0u; r < 8u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BK; // 0..63
+            uint col = idx % BK; // 0..31
+            sa[row * APAD + col] = a[(gm + row) * pc.K + (k0 + col)];
+        }
+
+        // ---- stage B tile (BK x BN) from global B (K x N row-major) ----
+        // 32*64 = 2048 elements; 256 threads -> 8 each.
+        for (uint r = 0u; r < 8u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BN; // 0..31
+            uint col = idx % BN; // 0..63
+            sb[row * BPAD + col] = b[(k0 + row) * pc.N + (gn + col)];
+        }
+
+        barrier(); // LDS writes visible to all threads before compute
+
+        // ---- compute: 4x4 micro-tile, vec4 A loads + vec4 B loads + FMA ----
+        for (uint k = 0u; k < BK; k += 4u) {
+            vec4 a0 = vec4(sa[(r0 + 0u) * APAD + k + 0u],
+                           sa[(r0 + 0u) * APAD + k + 1u],
+                           sa[(r0 + 0u) * APAD + k + 2u],
+                           sa[(r0 + 0u) * APAD + k + 3u]);
+            vec4 a1 = vec4(sa[(r0 + 1u) * APAD + k + 0u],
+                           sa[(r0 + 1u) * APAD + k + 1u],
+                           sa[(r0 + 1u) * APAD + k + 2u],
+                           sa[(r0 + 1u) * APAD + k + 3u]);
+            vec4 a2 = vec4(sa[(r0 + 2u) * APAD + k + 0u],
+                           sa[(r0 + 2u) * APAD + k + 1u],
+                           sa[(r0 + 2u) * APAD + k + 2u],
+                           sa[(r0 + 2u) * APAD + k + 3u]);
+            vec4 a3 = vec4(sa[(r0 + 3u) * APAD + k + 0u],
+                           sa[(r0 + 3u) * APAD + k + 1u],
+                           sa[(r0 + 3u) * APAD + k + 2u],
+                           sa[(r0 + 3u) * APAD + k + 3u]);
+
+            vec4 b0 = vec4(sb[(k + 0u) * BPAD + c0 + 0u],
+                           sb[(k + 0u) * BPAD + c0 + 1u],
+                           sb[(k + 0u) * BPAD + c0 + 2u],
+                           sb[(k + 0u) * BPAD + c0 + 3u]);
+            vec4 b1 = vec4(sb[(k + 1u) * BPAD + c0 + 0u],
+                           sb[(k + 1u) * BPAD + c0 + 1u],
+                           sb[(k + 1u) * BPAD + c0 + 2u],
+                           sb[(k + 1u) * BPAD + c0 + 3u]);
+            vec4 b2 = vec4(sb[(k + 2u) * BPAD + c0 + 0u],
+                           sb[(k + 2u) * BPAD + c0 + 1u],
+                           sb[(k + 2u) * BPAD + c0 + 2u],
+                           sb[(k + 2u) * BPAD + c0 + 3u]);
+            vec4 b3 = vec4(sb[(k + 3u) * BPAD + c0 + 0u],
+                           sb[(k + 3u) * BPAD + c0 + 1u],
+                           sb[(k + 3u) * BPAD + c0 + 2u],
+                           sb[(k + 3u) * BPAD + c0 + 3u]);
+
+            acc[0] += b0 * a0.xxxx;
+            acc[0] += b1 * a0.yyyy;
+            acc[0] += b2 * a0.zzzz;
+            acc[0] += b3 * a0.wwww;
+            acc[1] += b0 * a1.xxxx;
+            acc[1] += b1 * a1.yyyy;
+            acc[1] += b2 * a1.zzzz;
+            acc[1] += b3 * a1.wwww;
+            acc[2] += b0 * a2.xxxx;
+            acc[2] += b1 * a2.yyyy;
+            acc[2] += b2 * a2.zzzz;
+            acc[2] += b3 * a2.wwww;
+            acc[3] += b0 * a3.xxxx;
+            acc[3] += b1 * a3.yyyy;
+            acc[3] += b2 * a3.zzzz;
+            acc[3] += b3 * a3.wwww;
+        }
+
+        barrier(); // all threads done reading LDS before next chunk overwrites
+    }
+
+    // ---- store C micro-tile (4x4) ----
+    uint crow0 = gm + r0;
+    uint ccol0 = gn + c0;
+    c[(crow0 + 0u) * pc.N + ccol0] = acc[0].x;
+    c[(crow0 + 0u) * pc.N + ccol0 + 1u] = acc[0].y;
+    c[(crow0 + 0u) * pc.N + ccol0 + 2u] = acc[0].z;
+    c[(crow0 + 0u) * pc.N + ccol0 + 3u] = acc[0].w;
+    c[(crow0 + 1u) * pc.N + ccol0] = acc[1].x;
+    c[(crow0 + 1u) * pc.N + ccol0 + 1u] = acc[1].y;
+    c[(crow0 + 1u) * pc.N + ccol0 + 2u] = acc[1].z;
+    c[(crow0 + 1u) * pc.N + ccol0 + 3u] = acc[1].w;
+    c[(crow0 + 2u) * pc.N + ccol0] = acc[2].x;
+    c[(crow0 + 2u) * pc.N + ccol0 + 1u] = acc[2].y;
+    c[(crow0 + 2u) * pc.N + ccol0 + 2u] = acc[2].z;
+    c[(crow0 + 2u) * pc.N + ccol0 + 3u] = acc[2].w;
+    c[(crow0 + 3u) * pc.N + ccol0] = acc[3].x;
+    c[(crow0 + 3u) * pc.N + ccol0 + 1u] = acc[3].y;
+    c[(crow0 + 3u) * pc.N + ccol0 + 2u] = acc[3].z;
+    c[(crow0 + 3u) * pc.N + ccol0 + 3u] = acc[3].w;
+}

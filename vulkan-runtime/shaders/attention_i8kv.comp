@@ -1,0 +1,165 @@
+#version 450
+
+// attention_i8kv: hybrid int8-cache + fp16-new attention, mirroring
+// cactus_attention_hybrid_int8_fp16 exactly.
+//
+// KV cache is int8 (one value per int32 word) with per-group fp16/float scales
+// (group_size = 32); the "new" KV is fp16. The full KV sequence is
+// [cached (dequantized int8) | new (fp16)], then naive causal attention with
+// position_offset (== cache_len in the test) and optional window.
+//
+// One thread per query (b, qh, q), scalar two-pass (max, then softmax+weighted
+// sum), matching attention_naive. No LDS. Correctness-first.
+//
+// Cached dequant:  v = int8 * scale[group], group = d / group_size, with the
+// scale indexed by (src_kv * kv_heads + kh) * num_groups + group (NO batch).
+
+#define MAX_VDIM 64 // host contract: v_head_dim <= 64
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer Q    { uint qdata[]; }; // [batch][seq][qheads][head_dim] fp16
+layout(std430, binding = 1) readonly  buffer KC   { int kcache[]; }; // [batch][cache_len][kvheads][head_dim] int8
+layout(std430, binding = 2) readonly  buffer VC   { int vcache[]; }; // [batch][cache_len][kvheads][v_head_dim] int8
+layout(std430, binding = 3) readonly  buffer KSC  { float kscales[]; }; // [cache_len][kvheads][num_groups_k]
+layout(std430, binding = 4) readonly  buffer VSC  { float vscales[]; }; // [cache_len][kvheads][num_groups_v]
+layout(std430, binding = 5) readonly  buffer KN   { uint knew[]; }; // [batch][new_len][kvheads][head_dim] fp16
+layout(std430, binding = 6) readonly  buffer VN   { uint vnew[]; }; // [batch][new_len][kvheads][v_head_dim] fp16
+layout(std430, binding = 7) writeonly buffer O    { uint o[];    }; // [batch][seq][qheads][v_head_dim] fp16
+
+layout(push_constant) uniform PC {
+    uint batch;
+    uint seq_len;
+    uint cache_len;
+    uint new_len;
+    uint num_q_heads;
+    uint num_kv_heads;
+    uint head_dim;
+    uint v_head_dim;
+    uint position_offset;
+    uint is_causal;
+    uint window_size;
+    uint group_size;
+    uint num_groups_k;
+    uint num_groups_v;
+    float scale;
+} pc;
+
+float f16_load(uint h) { return unpackHalf2x16(h).x; }
+uint  f16_store(float f) { return packHalf2x16(vec2(f, 0.0)); }
+
+bool is_finite(float x) { return !isnan(x) && !isinf(x); }
+
+void main() {
+    uint qid = gl_GlobalInvocationID.x;
+    uint total = pc.batch * pc.num_q_heads * pc.seq_len;
+    if (qid >= total) return;
+
+    uint q  = qid % pc.seq_len;
+    uint qh = (qid / pc.seq_len) % pc.num_q_heads;
+    uint b  = qid / (pc.seq_len * pc.num_q_heads);
+
+    uint gqa = pc.num_q_heads / pc.num_kv_heads;
+    uint kh  = qh / gqa;
+    uint abs_q = pc.position_offset + q;
+
+    uint kv_seq_len = pc.cache_len + pc.new_len;
+    uint kv_start = 0u;
+    uint kv_end = kv_seq_len;
+    if (pc.window_size > 0u && pc.window_size < kv_seq_len) {
+        if (abs_q > pc.window_size) kv_start = abs_q - pc.window_size;
+        if (pc.is_causal != 0u) kv_end = min(kv_end, abs_q + 1u);
+    } else if (pc.is_causal != 0u) {
+        kv_end = min(kv_end, abs_q + 1u);
+    }
+
+    uint qbase = b * pc.seq_len * pc.num_q_heads * pc.head_dim
+                 + q * pc.num_q_heads * pc.head_dim + qh * pc.head_dim;
+
+    const float NEG_INF = -1.0 / 0.0;
+
+    // --- pass 1: max score ---
+    float max_score = NEG_INF;
+    for (uint kv = kv_start; kv < kv_end; ++kv) {
+        float s = 0.0;
+        if (kv < pc.cache_len) {
+            uint src = kv;
+            uint kbase = b * pc.cache_len * pc.num_kv_heads * pc.head_dim
+                         + src * pc.num_kv_heads * pc.head_dim + kh * pc.head_dim;
+            for (uint d = 0u; d < pc.head_dim; ++d) {
+                float sc = kscales[(src * pc.num_kv_heads + kh) * pc.num_groups_k + d / pc.group_size];
+                s += f16_load(qdata[qbase + d]) * (float(kcache[kbase + d]) * sc);
+            }
+        } else {
+            uint src = kv - pc.cache_len;
+            uint kbase = b * pc.new_len * pc.num_kv_heads * pc.head_dim
+                         + src * pc.num_kv_heads * pc.head_dim + kh * pc.head_dim;
+            for (uint d = 0u; d < pc.head_dim; ++d) {
+                s += f16_load(qdata[qbase + d]) * f16_load(knew[kbase + d]);
+            }
+        }
+        s *= pc.scale;
+        max_score = max(max_score, s);
+    }
+
+    // --- pass 2: exp + sum + weighted V ---
+    float o_acc[MAX_VDIM];
+    for (uint d = 0u; d < pc.v_head_dim; ++d) o_acc[d] = 0.0;
+    float sum = 0.0;
+
+    if (is_finite(max_score)) {
+        for (uint kv = kv_start; kv < kv_end; ++kv) {
+            float s = 0.0;
+            if (kv < pc.cache_len) {
+                uint src = kv;
+                uint kbase = b * pc.cache_len * pc.num_kv_heads * pc.head_dim
+                             + src * pc.num_kv_heads * pc.head_dim + kh * pc.head_dim;
+                for (uint d = 0u; d < pc.head_dim; ++d) {
+                    float sc = kscales[(src * pc.num_kv_heads + kh) * pc.num_groups_k + d / pc.group_size];
+                    s += f16_load(qdata[qbase + d]) * (float(kcache[kbase + d]) * sc);
+                }
+            } else {
+                uint src = kv - pc.cache_len;
+                uint kbase = b * pc.new_len * pc.num_kv_heads * pc.head_dim
+                             + src * pc.num_kv_heads * pc.head_dim + kh * pc.head_dim;
+                for (uint d = 0u; d < pc.head_dim; ++d) {
+                    s += f16_load(qdata[qbase + d]) * f16_load(knew[kbase + d]);
+                }
+            }
+            s *= pc.scale;
+
+            float wgt = exp(s - max_score);
+            sum += wgt;
+
+            if (kv < pc.cache_len) {
+                uint src = kv;
+                uint vbase = b * pc.cache_len * pc.num_kv_heads * pc.v_head_dim
+                             + src * pc.num_kv_heads * pc.v_head_dim + kh * pc.v_head_dim;
+                for (uint d = 0u; d < pc.v_head_dim; ++d) {
+                    float sc = vscales[(src * pc.num_kv_heads + kh) * pc.num_groups_v + d / pc.group_size];
+                    o_acc[d] += wgt * (float(vcache[vbase + d]) * sc);
+                }
+            } else {
+                uint src = kv - pc.cache_len;
+                uint vbase = b * pc.new_len * pc.num_kv_heads * pc.v_head_dim
+                             + src * pc.num_kv_heads * pc.v_head_dim + kh * pc.v_head_dim;
+                for (uint d = 0u; d < pc.v_head_dim; ++d) {
+                    o_acc[d] += wgt * f16_load(vnew[vbase + d]);
+                }
+            }
+        }
+    }
+
+    uint obase = b * pc.seq_len * pc.num_q_heads * pc.v_head_dim
+                 + q * pc.num_q_heads * pc.v_head_dim + qh * pc.v_head_dim;
+    if (sum > 0.0) {
+        float inv = 1.0 / sum;
+        for (uint d = 0u; d < pc.v_head_dim; ++d) {
+            o[obase + d] = f16_store(o_acc[d] * inv);
+        }
+    } else {
+        for (uint d = 0u; d < pc.v_head_dim; ++d) {
+            o[obase + d] = f16_store(0.0);
+        }
+    }
+}

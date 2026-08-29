@@ -49,6 +49,12 @@ class LossWormGraph:
         """Return ``(step_index, loss)`` pairs for the retained window."""
         return list(enumerate(self._history))
 
+    def viewport(self, start: int = 0, count: int | None = None) -> list[tuple[int, float]]:
+        """Return absolute-step/value pairs for a scrollable viewport."""
+        begin = max(0, min(int(start), len(self._history)))
+        end = len(self._history) if count is None else begin + max(0, int(count))
+        return [(begin + index, value) for index, value in enumerate(self._history[begin:end])]
+
     def scaled_points(self, width: int, height: int, *, padding: int = 8) -> list[tuple[float, float]]:
         """Compute canvas coordinates for the retained window.
 
@@ -72,13 +78,22 @@ class LossWormGraph:
         return points
 
     def draw(self, canvas: Any, width: int, height: int, *, padding: int = 8, start: int = 0, count: int | None = None) -> None:
-        """Render a viewport of the retained worm history."""
+        """Render a viewport with a connected line, markers, and value labels."""
         canvas.delete("all")
-        values = self._history[start:] if count is None else self._history[start:start + count]
-        points = LossWormGraph(values, max_points=max(1, len(values))).scaled_points(width, height, padding=padding)
+        start = max(0, min(int(start), len(self._history)))
+        values = self._history[start:] if count is None else self._history[start:start + max(0, int(count))]
+        if not values:
+            canvas.create_text(padding, padding, anchor="nw", text="No loss history", fill="#8b949e")
+            return
+        view = LossWormGraph(values, max_points=max(1, len(values)))
+        points = view.scaled_points(width, height, padding=padding + 18)
         if len(points) >= 2:
             flat = [coordinate for point in points for coordinate in point]
-            canvas.create_line(*flat, fill="#1f6feb", width=2, smooth=True)
+            # Do not use smoothing: every segment must join the measured points.
+            canvas.create_line(*flat, fill="#58a6ff", width=2, joinstyle="round")
         radius = 3
-        for x, y in points:
-            canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="#1f6feb", outline="")
+        label_step = max(1, len(points) // 24)
+        for index, ((x, y), value) in enumerate(zip(points, values)):
+            canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="#58a6ff", outline="")
+            if (index % label_step == 0 or index == len(points) - 1) and hasattr(canvas, "create_text"):
+                canvas.create_text(x, max(2, y - 10), anchor="s", text=f"{value:.4f}", fill="#f0f6fc", font=("TkDefaultFont", 8))

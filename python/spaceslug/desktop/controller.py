@@ -77,11 +77,12 @@ from .settings import (
     save_workspace_paths,
 )
 
-TAB_NAMES = ("Home", "Datasets", "Build & Train", "Interact", "Local API")
+TAB_NAMES = ("Home", "Datasets", "Build & Train", "Evaluate", "Interact", "Local API")
 
 DEFAULT_SEARXNG_BASE_URL = "http://127.0.0.1:8888"
 DEFAULT_API_ADDRESS = "127.0.0.1:8123"
-LOCAL_SOURCE_EXTENSIONS = (".txt", ".md", ".json", ".jsonl", ".pdf")
+LOCAL_SOURCE_EXTENSIONS = (".txt", ".md", ".json", ".jsonl", ".pdf", ".parquet")
+LOCAL_SOURCE_MAX_BYTES = 512 * 1024 * 1024
 
 # Explicit capability boundaries shown on each tab. Phase 1 workflows are wired
 # and these texts are assembled from the live module capability metadata rather
@@ -178,6 +179,7 @@ class DesktopController:
         self.runtime_root = RUNTIME_ROOT
         self.runtime_revision = "runtime"
         self.gpu_readiness: GpuReadiness | None = None
+        self._gpu_probe: dict[str, Any] | None = None
 
         # Persisted workspace paths. An explicit workspace_root wins over any
         # persisted config so callers (and tests) stay deterministic.
@@ -218,7 +220,9 @@ class DesktopController:
 
         # Training workflow state.
         self.training_steps = 10
-        self.training_learning_rate = 0.2
+        # Native bounded GPU SGD is intentionally conservative; larger rates can
+        # saturate the fixed-profile LoRA output projection even with guards.
+        self.training_learning_rate = 1.0e-5
         self.training_batch_size = 1
         # Six bounded host workers keeps CPU-side preparation responsive while
         # leaving cores and the Vulkan driver available for GPU-primary work.
@@ -231,6 +235,7 @@ class DesktopController:
         self.loss_low: float | None = None
         self.model_size_bytes: int | None = None
         self.training_metadata_path: str | None = None
+        self._training_metadata_exported = False
         self.completed_steps = 0
         self._training_thread: threading.Thread | None = None
         self._training_state = "idle"  # idle | running | finished | error
@@ -238,7 +243,13 @@ class DesktopController:
         self._training_result: dict | None = None
         self._training_paths: TrainingJobPaths | None = None
         self._training_mode = "idle"
-        self._gpu_readiness_error = "GPU readiness has not been refreshed"
+        self._evaluation_result: dict[str, Any] | None = None
+        self._evaluation_error: str | None = None
+        self._gpu_readiness_error = "GPU readiness is initializing in the background"
+        self._runtime_init_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._runtime_init_thread: threading.Thread | None = None
+        self._runtime_init_state = "not-started"  # not-started | running | ready | error
+        self._runtime_init_error: BaseException | None = None
         self._loss_queue: queue.Queue[tuple[int, float]] = queue.Queue()
         self._cancel_event = threading.Event()
 
@@ -260,7 +271,8 @@ class DesktopController:
 
     # -- runtime / placement -------------------------------------------------
     def refresh_runtime(self) -> RuntimePlacement:
-        self.placement = resolve_placement(self.runtime_probe())
+        self._gpu_probe = self.runtime_probe()
+        self.placement = resolve_placement(self._gpu_probe)
         return self.placement
 
     def runtime_status(self) -> RuntimePlacement:
@@ -288,11 +300,59 @@ class DesktopController:
         return readiness
 
     def refresh_gpu_readiness_if_needed(self) -> None:
-        if self.gpu_readiness is None:
+        """Apply completed startup work without ever probing on the UI thread."""
+        try:
+            while True:
+                kind, value = self._runtime_init_queue.get_nowait()
+                if kind == "ready":
+                    if isinstance(value, GpuReadiness):
+                        self.gpu_readiness = value
+                        self._gpu_probe = value.placement_probe()
+                    else:
+                        self._gpu_probe = dict(value)
+                    self._gpu_readiness_error = ""
+                    self.placement = resolve_placement(self._gpu_probe)
+                    self._runtime_init_state = "ready"
+                else:
+                    self._runtime_init_error = value
+                    self._gpu_readiness_error = f"{type(value).__name__}: {value}"
+                    self._runtime_init_state = "error"
+        except queue.Empty:
+            pass
+
+    def start_background_gpu_readiness(self) -> None:
+        """Start the native RADV probe on a worker so Tk stays responsive."""
+        if self._runtime_init_thread is not None and self._runtime_init_thread.is_alive():
+            return
+        if self.gpu_readiness is not None:
+            return
+        self._runtime_init_state = "running"
+        self._runtime_init_error = None
+
+        def probe() -> None:
             try:
-                self.refresh_gpu_readiness()
-            except Exception:
-                pass
+                # Use the injected probe for tests and alternate deployments. The
+                # production probe is already the controller default.
+                result = self.runtime_probe()
+                # Warm the backend/inference object on the same worker.  This is
+                # deliberately not done by Tk callbacks, so launch and refresh
+                # remain responsive even when Vulkan/ICD loading is slow.
+                if not self._inference_explicit:
+                    self.initialize_inference()
+                self._runtime_init_queue.put(("ready", result))
+            except BaseException as exc:
+                self._runtime_init_queue.put(("error", exc))
+
+        self._runtime_init_thread = threading.Thread(
+            target=probe, name="spaceslug-gpu-readiness", daemon=True
+        )
+        self._runtime_init_thread.start()
+
+    def gpu_initialization_status(self) -> dict[str, Any]:
+        return {
+            "state": self._runtime_init_state,
+            "error": self._gpu_readiness_error if self._runtime_init_state == "error" else None,
+        }
 
     def set_gpu_primary_requested(self, value: bool) -> None:
         self.gpu_primary_requested = bool(value)
@@ -459,6 +519,7 @@ class DesktopController:
             root,
             recursive=recursive,
             extensions=LOCAL_SOURCE_EXTENSIONS,
+            max_bytes=LOCAL_SOURCE_MAX_BYTES,
         )
 
     def import_local_source(self, path: str | Path, *, license: str | None = None) -> Any:
@@ -564,8 +625,16 @@ class DesktopController:
         return result
 
     def import_dataset_bundle(self, path: str | Path) -> Any:
-        """Verify and load an existing canonical or training .dts bundle."""
-        bundle = verify_bundle(path)
+        """Verify and load an existing canonical or training .dts bundle.
+
+        Linux directory choosers may return ``manifest.json`` when a user
+        opens a ``.dts`` directory and confirms that file. Accept that form so
+        the UI remains forgiving while still verifying the bundle directory.
+        """
+        selected = Path(path).expanduser()
+        if selected.is_file() and selected.name == "manifest.json":
+            selected = selected.parent
+        bundle = verify_bundle(selected)
         self.created_bundle = str(bundle.root)
         self.dataset_id = str(bundle.manifest.get("dataset_id", Path(path).stem))
         self.dataset_revision = bundle.manifest.get("revision")
@@ -694,6 +763,7 @@ class DesktopController:
         self._training_result = None
         self._training_error = None
         self._training_mode = "cpu-reference"
+        self._training_metadata_exported = False
         self._training_state = "running"
         self.latest_loss = None
         self.loss.clear()
@@ -714,7 +784,7 @@ class DesktopController:
         return self.training_status()
 
     def native_gpu_training_readiness(self) -> dict[str, Any]:
-        probe = self.gpu_readiness.placement_probe() if self.gpu_readiness is not None else None
+        probe = self.gpu_readiness.placement_probe() if self.gpu_readiness is not None else self._gpu_probe
         if probe is None:
             return {"ready": False, "reason": self._gpu_readiness_error or "GPU readiness has not been refreshed", "missing": []}
         return native_gpu_readiness(probe, self.training_rank)
@@ -735,6 +805,7 @@ class DesktopController:
         self._training_result = None
         self._training_error = None
         self._training_mode = "native-gpu"
+        self._training_metadata_exported = False
         self._training_state = "running"
         self.latest_loss = None
         self.loss.clear()
@@ -802,6 +873,8 @@ class DesktopController:
         return int(profile.get("vocab_size", 259) * profile.get("hidden_size", 64) * 4)
 
     def _export_training_metadata(self) -> None:
+        if self._training_metadata_exported:
+            return
         if self._training_paths is None or self.training_start_time is None:
             return
         path = self._training_paths.experiment.with_suffix(".telemetry.json")
@@ -812,6 +885,7 @@ class DesktopController:
                    "mode": self._training_mode, "result": self._training_result}
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         self.training_metadata_path = str(path)
+        self._training_metadata_exported = True
 
     def _on_training_step(self, step: int, loss: float) -> None:
         """Thread-safe per-step callback; the main thread drains the queue."""
@@ -831,6 +905,8 @@ class DesktopController:
             self.completed_steps = step
             if self._training_state != "running":
                 self._export_training_metadata()
+        if self._training_state != "running":
+            self._export_training_metadata()
         return self.training_status()
 
     def wait_training(self, timeout: float | None = None) -> dict:
@@ -892,6 +968,29 @@ class DesktopController:
         if self._training_error is not None:
             status["error"] = f"{type(self._training_error).__name__}: {self._training_error}"
         return status
+
+    # -- evaluation -----------------------------------------------------------
+    def run_evaluation(self) -> dict[str, Any]:
+        """Report held-out evaluation readiness without fabricating scores."""
+        self._evaluation_error = None
+        bundle_path = self.training_bundle_path or self.created_bundle
+        if not bundle_path:
+            self._evaluation_error = "No dataset bundle is selected."
+        else:
+            bundle = verify_bundle(bundle_path)
+            counts = {split: len(bundle.records(split)) for split in ("validation", "test")}
+            if not counts["validation"] and not counts["test"]:
+                self._evaluation_error = "No validation or test records are available."
+            else:
+                self._evaluation_result = {
+                    "status": "not-run-readonly-graph-unavailable",
+                    "validation_records": counts["validation"],
+                    "test_records": counts["test"],
+                    "message": "Held-out data is available, but native read-only evaluation is not implemented; no scores were fabricated.",
+                }
+                return self._evaluation_result
+        self._evaluation_result = {"status": "unavailable", "message": self._evaluation_error}
+        return self._evaluation_result
 
     # -- chat ----------------------------------------------------------------
     def initialize_inference(self) -> dict[str, Any]:
@@ -990,6 +1089,7 @@ class DesktopController:
             "placement": self.placement.to_dict(),
             "training_placement": self.training_placement().to_dict(),
             "gpu_primary_requested": self.gpu_primary_requested,
+            "gpu_initialization": self.gpu_initialization_status(),
             "loss_history": self.loss.history,
             "workspace_root": str(self.paths.workspace_root),
             "config_path": str(self.config_path),
@@ -1019,6 +1119,8 @@ class DesktopController:
             "training": self.training_status(),
             "chat_prompt": self.chat_prompt,
             "chat_history": list(self.chat_history),
+            "evaluation": self._evaluation_result,
+            "evaluation_error": self._evaluation_error,
             "inference": dict(self.inference_status),
             "api_address": self.api_address,
             "api": self.api_status(),

@@ -1,0 +1,33 @@
+#version 450
+// Fixed Tiny LoRA gradients. X[M,64], dY[M,64], A[64,R], B[R,64].
+// dA = X^T*dY*B^T, dB = (X*A)^T*dY. fp32, 256 lanes/four wave64 waves.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer XBuffer { float x[]; };
+layout(std430, binding = 1) readonly buffer DYBuffer { float dy[]; };
+layout(std430, binding = 2) readonly buffer ABuffer { float a[]; };
+layout(std430, binding = 3) readonly buffer BBuffer { float b[]; };
+layout(std430, binding = 4) writeonly buffer DABuffer { float da[]; };
+layout(std430, binding = 5) writeonly buffer DBBuffer { float db[]; };
+layout(push_constant) uniform PC { uint m; uint rank; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint elements = 64u * pc.rank;
+    if (id < elements) {
+        uint k = id / pc.rank;
+        uint r = id % pc.rank;
+        float value = 0.0;
+        for (uint row = 0u; row < pc.m; ++row) for (uint column = 0u; column < 64u; ++column) value += x[row * 64u + k] * dy[row * 64u + column] * b[r * 64u + column];
+        da[id] = value;
+    }
+    if (id < elements) {
+        uint r = id / 64u;
+        uint column = id % 64u;
+        float value = 0.0;
+        for (uint row = 0u; row < pc.m; ++row) {
+            float reduced = 0.0;
+            for (uint k = 0u; k < 64u; ++k) reduced += x[row * 64u + k] * a[k * pc.rank + r];
+            value += reduced * dy[row * 64u + column];
+        }
+        db[id] = value;
+    }
+}

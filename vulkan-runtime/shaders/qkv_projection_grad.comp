@@ -1,0 +1,37 @@
+#version 450
+// Standalone deterministic FP32 Q/K/V parameter gradient + SGD.
+// Inputs and all three explicit row-major [H,H] matrices are caller-owned API state.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer States { float x[]; };
+layout(std430,binding=1) readonly buffer DQ { float dq[]; };
+layout(std430,binding=2) readonly buffer DK { float dk[]; };
+layout(std430,binding=3) readonly buffer DV { float dv[]; };
+layout(std430,binding=4) buffer WQ { float wq[]; };
+layout(std430,binding=5) buffer WK { float wk[]; };
+layout(std430,binding=6) buffer WV { float wv[]; };
+layout(std430,binding=7) buffer GQ { float gq[]; };
+layout(std430,binding=8) buffer GK { float gk[]; };
+layout(std430,binding=9) buffer GV { float gv[]; };
+layout(push_constant) uniform PC { uint rows; uint tcap; uint hidden; float learning_rate; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint matrix_size = pc.hidden * pc.hidden;
+    uint matrix = id / matrix_size;
+    uint elem = id % matrix_size;
+    if (matrix >= 3u) return;
+    uint input_col = elem / pc.hidden;
+    uint output_col = elem % pc.hidden;
+    float s = 0.0;
+    for (uint t = 0u; t < pc.tcap; ++t) {
+        if (t < pc.rows) {
+            uint xi = t * pc.hidden + input_col;
+            uint oi = t * pc.hidden + output_col;
+            if (matrix == 0u) s += x[xi] * dq[oi];
+            else if (matrix == 1u) s += x[xi] * dk[oi];
+            else s += x[xi] * dv[oi];
+        }
+    }
+    if (matrix == 0u) { gq[elem] = s; wq[elem] -= pc.learning_rate * s; }
+    else if (matrix == 1u) { gk[elem] = s; wk[elem] -= pc.learning_rate * s; }
+    else { gv[elem] = s; wv[elem] -= pc.learning_rate * s; }
+}

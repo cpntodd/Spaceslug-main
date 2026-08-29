@@ -1,0 +1,141 @@
+#version 450
+
+// sgemm variant V1: larger K-chunk (BK=48) vs the M2 baseline (BK=32).
+//
+// Identical 64x64 output tile / 256-thread / 4x4 micro-tile shape as
+// sgemm.comp, but the K-loop streams BK=48 columns at a time instead of 32.
+// Fewer K-chunks => fewer barrier pairs per K-loop (K/48 vs K/32), which
+// amortizes the two barriers that frame every chunk's LDS load/compute.
+//
+// gfx803 (Polaris) rules:
+//   - wave64: 256 threads = 16x16 grid = 4 waves (multiple of 64).
+//   - LDS <= 32 KB/workgroup. Here: A 64*66 + B 48*66 = 4224 + 3168 =
+//     7392 floats = 29568 B (28.9 KB) — under the cap, but only 2 workgroups
+//     fit per CU (vs 3 for BK=32), so occupancy drops from 12 to 8 waves/CU.
+//   - LDS row stride == 2 (mod 32) floats: APAD=66 and BPAD=66 (the smallest
+//     values >= width that are == 2 mod 32) so a wave reading 16 distinct A
+//     rows maps them to 16 distinct banks (stride 48 would alias them).
+//   - fp32 FMA only (no packed fp16, no coop matrices).
+//
+// K tail: BK=48 does not divide every sweep size (256/512/1024/2048), so the
+// staging loop zero-fills the A/B columns whose global K index is out of
+// bounds. The hot FMA loop stays branch-free; only the (cold) staging loop
+// carries the `kk < pc.K` guard.
+//
+// Host contract: M % 64 == 0, N % 64 == 0 (K is arbitrary — the tail guard
+// handles any K).
+
+#define BM 64   // tile rows (M dimension)
+#define BN 64   // tile cols (N dimension)
+#define BK 48   // K chunk
+#define APAD 66 // A LDS row stride: BM-tile width BK + 18 (== 2 mod 32)
+#define BPAD 66 // B LDS row stride: BK rows x (BN+2) cols (== 2 mod 32)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A { float a[]; };
+layout(std430, binding = 1) readonly  buffer B { float b[]; };
+layout(std430, binding = 2) writeonly buffer C { float c[]; };
+
+layout(push_constant) uniform PC {
+    uint M; // rows of C / A
+    uint N; // cols of C / B
+    uint K; // inner dim
+} pc;
+
+shared float sa[BM * APAD]; // 64 * 66 = 4224 floats (16896 B)
+shared float sb[BK * BPAD]; // 48 * 66 = 3168 floats (12672 B)
+
+void main() {
+    uint tx = gl_LocalInvocationID.x; // 0..15 -> tile column group
+    uint ty = gl_LocalInvocationID.y; // 0..15 -> tile row group
+    uint tid = ty * 16u + tx;         // 0..255
+
+    uint tile_m = gl_WorkGroupID.y;
+    uint tile_n = gl_WorkGroupID.x;
+
+    uint gm = tile_m * BM; // global M offset of this tile
+    uint gn = tile_n * BN; // global N offset of this tile
+
+    uint r0 = ty * 4u; // local row of this thread's micro-tile
+    uint c0 = tx * 4u; // local col of this thread's micro-tile
+
+    // 16 accumulators (4 rows x 4 cols), resident in VGPRs.
+    vec4 acc[4];
+    acc[0] = vec4(0.0);
+    acc[1] = vec4(0.0);
+    acc[2] = vec4(0.0);
+    acc[3] = vec4(0.0);
+
+    for (uint k0 = 0u; k0 < pc.K; k0 += BK) {
+        // ---- stage A tile (BM x BK) from global A (M x K row-major) ----
+        // 64*48 = 3072 elements; 256 threads -> 12 each.
+        for (uint r = 0u; r < 12u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BK; // 0..63
+            uint col = idx % BK; // 0..47
+            uint kk = k0 + col;
+            sa[row * APAD + col] = (kk < pc.K) ? a[(gm + row) * pc.K + kk] : 0.0;
+        }
+
+        // ---- stage B tile (BK x BN) from global B (K x N row-major) ----
+        // 48*64 = 3072 elements; 256 threads -> 12 each.
+        for (uint r = 0u; r < 12u; ++r) {
+            uint idx = tid + r * 256u;
+            uint row = idx / BN; // 0..47
+            uint col = idx % BN; // 0..63
+            uint kk = k0 + row;
+            sb[row * BPAD + col] = (kk < pc.K) ? b[kk * pc.N + (gn + col)] : 0.0;
+        }
+
+        barrier(); // LDS writes visible to all threads before compute
+
+        // ---- compute: 4x4 micro-tile, vec2 A loads + vec4 B loads + FMA ----
+        for (uint k = 0u; k < BK; k += 2u) {
+            vec2 a0 = vec2(sa[(r0 + 0u) * APAD + k], sa[(r0 + 0u) * APAD + k + 1u]);
+            vec2 a1 = vec2(sa[(r0 + 1u) * APAD + k], sa[(r0 + 1u) * APAD + k + 1u]);
+            vec2 a2 = vec2(sa[(r0 + 2u) * APAD + k], sa[(r0 + 2u) * APAD + k + 1u]);
+            vec2 a3 = vec2(sa[(r0 + 3u) * APAD + k], sa[(r0 + 3u) * APAD + k + 1u]);
+
+            vec4 bk0 = vec4(sb[(k + 0u) * BPAD + c0 + 0u],
+                            sb[(k + 0u) * BPAD + c0 + 1u],
+                            sb[(k + 0u) * BPAD + c0 + 2u],
+                            sb[(k + 0u) * BPAD + c0 + 3u]);
+            vec4 bk1 = vec4(sb[(k + 1u) * BPAD + c0 + 0u],
+                            sb[(k + 1u) * BPAD + c0 + 1u],
+                            sb[(k + 1u) * BPAD + c0 + 2u],
+                            sb[(k + 1u) * BPAD + c0 + 3u]);
+
+            acc[0] += bk0 * a0.xxxx;
+            acc[0] += bk1 * a0.yyyy;
+            acc[1] += bk0 * a1.xxxx;
+            acc[1] += bk1 * a1.yyyy;
+            acc[2] += bk0 * a2.xxxx;
+            acc[2] += bk1 * a2.yyyy;
+            acc[3] += bk0 * a3.xxxx;
+            acc[3] += bk1 * a3.yyyy;
+        }
+
+        barrier(); // all threads done reading LDS before next chunk overwrites
+    }
+
+    // ---- store C micro-tile (4x4) ----
+    uint crow0 = gm + r0;
+    uint ccol0 = gn + c0;
+    c[(crow0 + 0u) * pc.N + ccol0] = acc[0].x;
+    c[(crow0 + 0u) * pc.N + ccol0 + 1u] = acc[0].y;
+    c[(crow0 + 0u) * pc.N + ccol0 + 2u] = acc[0].z;
+    c[(crow0 + 0u) * pc.N + ccol0 + 3u] = acc[0].w;
+    c[(crow0 + 1u) * pc.N + ccol0] = acc[1].x;
+    c[(crow0 + 1u) * pc.N + ccol0 + 1u] = acc[1].y;
+    c[(crow0 + 1u) * pc.N + ccol0 + 2u] = acc[1].z;
+    c[(crow0 + 1u) * pc.N + ccol0 + 3u] = acc[1].w;
+    c[(crow0 + 2u) * pc.N + ccol0] = acc[2].x;
+    c[(crow0 + 2u) * pc.N + ccol0 + 1u] = acc[2].y;
+    c[(crow0 + 2u) * pc.N + ccol0 + 2u] = acc[2].z;
+    c[(crow0 + 2u) * pc.N + ccol0 + 3u] = acc[2].w;
+    c[(crow0 + 3u) * pc.N + ccol0] = acc[3].x;
+    c[(crow0 + 3u) * pc.N + ccol0 + 1u] = acc[3].y;
+    c[(crow0 + 3u) * pc.N + ccol0 + 2u] = acc[3].z;
+    c[(crow0 + 3u) * pc.N + ccol0 + 3u] = acc[3].w;
+}

@@ -1,0 +1,12 @@
+#version 450
+// Standalone true RMSNorm forward with preserved raw state and inverse RMS.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer X{float x[];};
+layout(std430,binding=1) readonly buffer W{float gamma[];};
+layout(std430,binding=2) writeonly buffer Y{float y[];};
+layout(std430,binding=3) writeonly buffer Raw{float raw[];};
+layout(std430,binding=4) writeonly buffer Inv{float inv_rms[];};
+layout(push_constant) uniform PC{uint rows;uint hidden;}pc;
+const float EPSILON=1e-5;
+shared float sums[256];
+void main(){uint row=gl_WorkGroupID.x,lane=gl_LocalInvocationID.x;if(row>=pc.rows)return;uint base=row*pc.hidden;float sum=0.;for(uint i=lane;i<pc.hidden;i+=256){float v=x[base+i];sum+=v*v;}sums[lane]=sum;barrier();for(uint stride=128u;stride>0u;stride>>=1u){if(lane<stride)sums[lane]+=sums[lane+stride];barrier();}float inv=1./sqrt(sums[0]/float(pc.hidden)+EPSILON);if(lane==0u)inv_rms[row]=inv;for(uint i=lane;i<pc.hidden;i+=256){float v=x[base+i];raw[base+i]=v;y[base+i]=v*gamma[i]*inv;}}

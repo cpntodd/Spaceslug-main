@@ -1,0 +1,205 @@
+#version 450
+
+// attention_causal: single-head causal scaled-dot-product attention,
+// fp32, ONLINE SOFTMAX (flash-style). O[t][d] = softmax(Q[t] . K / sqrt(D)) . V,
+// with Q/K/V each T x D and O T x D, scale 1/sqrt(D).
+//
+// Flash-style structure: each workgroup owns a block of BQ=16 query rows and
+// streams the KV sequence in BK=32-row blocks, keeping O accumulators and the
+// running (m, l) in registers/LDS. The full T x T score matrix is NEVER
+// materialized -- only a BQ x BK (16 x 32) per-block score tile lives in LDS,
+// which is what makes this flash-style rather than a naive full-scores kernel.
+//
+// Online softmax (per query row, per KV block):
+//   m_new = max(m_old, block_max)
+//   alpha = exp(m_old - m_new)
+//   p[k]  = exp(s[k] - m_new)
+//   l_new = alpha*l_old + sum_k p[k]
+//   O     = alpha*O     + sum_k p[k] * V[k][:]
+// Final (after all blocks):  O /= l.
+//
+// Thread map: 256 threads = 16 (ty: query row) x 16 (tx: D-slice of 4 cols).
+//   - thread (ty, tx) owns O[ty][tx*4 .. tx*4+3] (4 accumulator registers).
+//   - scores are computed 2/thread (256 threads cover 16*32=512), then the
+//     per-row max / sum are reduced across the 16 tx lanes in LDS.
+//
+// gfx803 (Polaris) rules:
+//   - wave64 only: 256 threads = 4 waves (multiple of 64).
+//   - LDS <= 32 KB/workgroup. Here: Q 16*66 + K 32*66 + V 32*66 + S 16*34 +
+//     red 16*18 + 3*16 = 6160 floats = 24640 B < 32 KB.
+//   - padded LDS row stride == 2 (mod 32) floats (66, 34) to avoid bank
+//     conflicts on the 64-wide rows.
+//   - fp32 only; exp() and sqrt() are the hardware/software implementations.
+//
+// Host contract (asserted on the host): T % 16 == 0, T % 32 == 0, D == 64,
+// and actual_tokens <= T. Query row t attends only to keys k <= t and
+// k < actual_tokens; padded rows are masked out.
+
+#define BQ 16   // query rows per workgroup
+#define BK 32   // KV rows per block
+#define DIM 64  // head dim (== D, asserted on host)
+#define DP 4    // D cols per tx lane (DIM / 16)
+
+#define QPAD 66  // Q LDS row stride (DIM + 2)
+#define KVPAD 66 // K/V LDS row stride (DIM + 2)
+#define SPAD 34  // score LDS row stride (BK + 2)
+#define RPAD 18  // reduction LDS row stride (16 + 2)
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer Q { float q[]; }; // T * D
+layout(std430, binding = 1) readonly  buffer K { float k[]; }; // T * D
+layout(std430, binding = 2) readonly  buffer V { float v[]; }; // T * D
+layout(std430, binding = 3) writeonly buffer O { float o[]; }; // T * D
+
+layout(push_constant) uniform PC {
+    uint T; // padded capacity / rows in Q, K, V, O
+    uint D; // head dim (== DIM)
+    uint actual_tokens; // valid prefix length; causal keys are < actual_tokens
+} pc;
+
+shared float qL[BQ * QPAD];   // 16*66
+shared float kL[BK * KVPAD];  // 32*66
+shared float vL[BK * KVPAD];  // 32*66
+shared float sL[BQ * SPAD];   // 16*34   (per-block scores, then probabilities)
+shared float red[BQ * RPAD];  // 16*18   (reduction scratch across tx lanes)
+shared float mRun[BQ];        // running max
+shared float lRun[BQ];        // running denominator
+shared float alphaL[BQ];      // rescale factor for the current block
+
+void main() {
+    uint tid = gl_LocalInvocationID.x; // 0..255
+    uint ty  = tid >> 4;               // query row 0..15
+    uint tx  = tid & 15u;              // D-slice 0..15
+    uint gq  = gl_WorkGroupID.x * BQ;  // global query row base
+
+    float scale = 1.0 / sqrt(float(pc.D));
+
+    // ---- load Q block (once) ----
+    for (uint e = 0u; e < 4u; ++e) {
+        uint fidx = tid + e * 256u; // 0..1023
+        uint row  = fidx >> 6;      // 0..15
+        uint col  = fidx & 63u;     // 0..63
+        uint gr   = gq + row;
+        qL[row * QPAD + col] = (gr < pc.T) ? q[gr * pc.D + col] : 0.0;
+    }
+
+    // ---- init running state + accumulators ----
+    float oAcc[DP];
+    for (uint j = 0u; j < DP; ++j) {
+        oAcc[j] = 0.0;
+    }
+    if (tx == 0u) {
+        mRun[ty] = -1.0e30;
+        lRun[ty] = 0.0;
+    }
+
+    barrier(); // Q load + init visible
+
+    uint numBlocks = pc.T / BK;
+    for (uint kb = 0u; kb < numBlocks; ++kb) {
+        uint gk = kb * BK; // global key row base
+
+        // ---- load K, V blocks ----
+        for (uint e = 0u; e < 8u; ++e) {
+            uint fidx = tid + e * 256u; // 0..2047
+            uint krow = fidx >> 6;      // 0..31
+            uint col  = fidx & 63u;     // 0..63
+            uint gr   = gk + krow;
+            kL[krow * KVPAD + col] = (gr < pc.T) ? k[gr * pc.D + col] : 0.0;
+            vL[krow * KVPAD + col] = (gr < pc.T) ? v[gr * pc.D + col] : 0.0;
+        }
+
+        barrier(); // K/V visible
+
+        // ---- scores S[row][kk] = scale * dot(Q[row], K[kk]) ----
+        for (uint e = 0u; e < 2u; ++e) {
+            uint fidx = tid + e * 256u; // 0..511
+            uint row  = fidx >> 5;      // 0..15
+            uint kk   = fidx & 31u;     // 0..31
+            float s = 0.0;
+            for (uint d = 0u; d < DIM; ++d) {
+                s += qL[row * QPAD + d] * kL[kk * KVPAD + d];
+            }
+            uint query = gq + row;
+            uint key = gk + kk;
+            sL[row * SPAD + kk] = (query < pc.actual_tokens && key <= query && key < pc.actual_tokens)
+                ? s * scale : -1.0e30;
+        }
+
+        barrier(); // scores visible
+
+        // ---- block max: reduce 32 scores per row across 16 tx lanes ----
+        {
+            float m = max(sL[ty * SPAD + tx * 2u], sL[ty * SPAD + tx * 2u + 1u]);
+            red[ty * RPAD + tx] = m;
+        }
+        barrier();
+        for (uint s = 8u; s > 0u; s >>= 1u) {
+            if (tx < s) {
+                red[ty * RPAD + tx] = max(red[ty * RPAD + tx], red[ty * RPAD + tx + s]);
+            }
+            barrier();
+        }
+
+        // ---- m_new + alpha ----
+        if (tx == 0u) {
+            float mOld = mRun[ty];
+            float mNew = max(mOld, red[ty * RPAD]);
+            mRun[ty]   = mNew;
+            alphaL[ty] = exp(mOld - mNew);
+        }
+        barrier(); // m_new / alpha visible
+
+        // ---- exp + local sum (p overwrites score in place) ----
+        {
+            float mNew = mRun[ty];
+            float sum = 0.0;
+            for (uint j = 0u; j < 2u; ++j) {
+                uint kk = tx * 2u + j;
+                float p = exp(sL[ty * SPAD + kk] - mNew);
+                sL[ty * SPAD + kk] = p;
+                sum += p;
+            }
+            red[ty * RPAD + tx] = sum;
+        }
+        barrier();
+        for (uint s = 8u; s > 0u; s >>= 1u) {
+            if (tx < s) {
+                red[ty * RPAD + tx] += red[ty * RPAD + tx + s];
+            }
+            barrier();
+        }
+
+        // ---- l_new ----
+        if (tx == 0u) {
+            lRun[ty] = alphaL[ty] * lRun[ty] + red[ty * RPAD];
+        }
+        barrier(); // lRun updated
+
+        // ---- O update: O = alpha*O + sum_k p[k] * V[k][d] ----
+        {
+            float a = alphaL[ty];
+            for (uint j = 0u; j < DP; ++j) {
+                oAcc[j] *= a;
+            }
+            for (uint kk = 0u; kk < BK; ++kk) {
+                float p = sL[ty * SPAD + kk];
+                for (uint j = 0u; j < DP; ++j) {
+                    oAcc[j] += p * vL[kk * KVPAD + tx * DP + j];
+                }
+            }
+        }
+
+        barrier(); // O update done reading V/S before next block overwrites
+    }
+
+    // ---- finalize: O = O / l ----
+    float inv = 1.0 / lRun[ty];
+    for (uint j = 0u; j < DP; ++j) {
+        uint gr = gq + ty;
+        if (gr < pc.T) {
+            o[gr * pc.D + tx * DP + j] = oAcc[j] * inv;
+        }
+    }
+}

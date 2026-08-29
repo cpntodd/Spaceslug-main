@@ -1,0 +1,10 @@
+#version 450
+// Gradient for y[row,c] = x[row,c] * gamma[c], where states stores y.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer ScaledX { float scaled_x[]; };
+layout(std430,binding=1) readonly buffer DY { float dy[]; };
+layout(std430,binding=2) readonly buffer Mask { uint mask[]; };
+layout(std430,binding=3) readonly buffer Gamma { float gamma[]; };
+layout(std430,binding=4) writeonly buffer DG { float dgamma[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; } pc;
+void main(){uint c=gl_GlobalInvocationID.x;if(c>=pc.hidden)return;float sum=0.0;for(uint row=0u;row<pc.rows;++row)if(mask[row]!=0u){float g=gamma[c];float raw=(abs(g)>1e-12)?scaled_x[row*pc.hidden+c]/g:0.0;sum+=raw*dy[row*pc.hidden+c];}dgamma[c]=sum;}

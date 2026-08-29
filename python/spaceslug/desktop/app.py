@@ -30,11 +30,14 @@ class DesktopApp:
     def __init__(self, controller: DesktopController | None = None, root: tk.Tk | None = None) -> None:
         self.controller = controller or DesktopController(code_revision=detect_code_revision())
         self.root = root or tk.Tk()
-        self.root.title("Spaceslug-main — desktop (Phase 1)")
-        self.root.geometry("820x720")
+        self.root.title("Spaceslug Studio — local AI laboratory")
+        self.root.geometry("1180x820")
+        self.root.minsize(960, 680)
 
         self._vars: dict[str, tk.StringVar] = {}
         self._polling = False
+        self._gpu_readiness_polling = False
+        self._chat_busy = False
         self._build()
         self.refresh()
 
@@ -66,6 +69,22 @@ class DesktopApp:
 
     def _set_label(self, label: ttk.Label, text: str) -> None:
         label.configure(text=text)
+
+    def _home_card(self, parent: tk.Widget, row: int, column: int, eyebrow: str, title: str, detail: str) -> ttk.Frame:
+        card = ttk.Frame(parent, padding=(16, 13), style="Card.TFrame")
+        card.grid(row=row, column=column, sticky="nsew", padx=5, pady=5)
+        ttk.Label(card, text=eyebrow, style="CardEyebrow.TLabel").pack(anchor="w")
+        title_label = ttk.Label(card, text=title, style="CardTitle.TLabel")
+        title_label.pack(anchor="w", pady=(5, 2))
+        detail_label = ttk.Label(card, text=detail, style="CardDetail.TLabel", wraplength=350)
+        detail_label.pack(anchor="w")
+        card._spaceslug_title = title_label  # type: ignore[attr-defined]
+        card._spaceslug_detail = detail_label  # type: ignore[attr-defined]
+        return card
+
+    def _set_home_card(self, card: ttk.Frame, title: str, detail: str) -> None:
+        card._spaceslug_title.configure(text=title)  # type: ignore[attr-defined]
+        card._spaceslug_detail.configure(text=detail)  # type: ignore[attr-defined]
 
     def _path_row(self, parent: tk.Widget, key: str, label: str, *, browse: bool = False) -> None:
         row = ttk.Frame(parent)
@@ -103,47 +122,160 @@ class DesktopApp:
         self.refresh()
 
     def _refresh_gpu_readiness(self) -> None:
-        """Refresh the safe native-runtime diagnostic from the Home tab."""
+        """Start the safe native-runtime diagnostic without blocking Tk."""
         try:
             self.controller.set_runtime_target(
                 self._vars["runtime_root"].get(), self._vars["runtime_revision"].get()
             )
-            self.controller.initialize_inference()
-            report = self.controller.refresh_gpu_readiness()
+            self.controller.start_background_gpu_readiness()
         except Exception as exc:
-            text = f"GPU readiness check failed: {type(exc).__name__}: {exc}"
-        else:
-            text = report.summary_text()
+            self._set_gpu_readiness_text(f"GPU readiness check failed: {type(exc).__name__}: {exc}")
+            return
+        self._set_gpu_readiness_text("GPU readiness is initializing in the background…")
+        self._schedule_gpu_readiness_poll()
+        self.refresh()
+
+    def _set_gpu_readiness_text(self, text: str) -> None:
         self._gpu_readiness_text.configure(state="normal")
         self._gpu_readiness_text.delete("1.0", "end")
         self._gpu_readiness_text.insert("1.0", text)
         self._gpu_readiness_text.configure(state="disabled")
+
+    def _schedule_gpu_readiness_poll(self) -> None:
+        if self._gpu_readiness_polling:
+            return
+        self._gpu_readiness_polling = True
+        self.root.after(100, self._poll_gpu_readiness)
+
+    def _poll_gpu_readiness(self) -> None:
+        self.controller.refresh_gpu_readiness_if_needed()
+        status = self.controller.gpu_initialization_status()
+        if self.controller.gpu_readiness is None and status["state"] == "running":
+            self.root.after(100, self._poll_gpu_readiness)
+            return
+        self._gpu_readiness_polling = False
+        if self.controller.gpu_readiness is not None:
+            self._set_gpu_readiness_text(self.controller.gpu_readiness.summary_text())
+        elif status.get("error"):
+            self._set_gpu_readiness_text(f"GPU readiness check failed: {status['error']}")
         self.refresh()
 
     def _build(self) -> None:
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill="both", expand=True, padx=6, pady=6)
-        self.notebook = notebook
+        self._configure_theme()
+        shell = ttk.Frame(self.root, style="Shell.TFrame")
+        shell.pack(fill="both", expand=True)
+        shell.columnconfigure(1, weight=1)
+        shell.rowconfigure(0, weight=1)
 
-        self._home_frame = self._build_home(notebook)
-        self._datasets_frame = self._build_datasets(notebook)
-        self._training_frame = self._build_training(notebook)
-        self._interact_frame = self._build_interact(notebook)
-        self._api_frame = self._build_api(notebook)
+        sidebar = ttk.Frame(shell, width=220, padding=(18, 20), style="Sidebar.TFrame")
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        ttk.Label(sidebar, text="◉ SPACESLUG", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(sidebar, text="Local AI laboratory", style="SidebarSub.TLabel").pack(anchor="w", pady=(2, 26))
+        self._nav_buttons: dict[str, ttk.Button] = {}
+        for name, label in (("Home", "⌂  Home"), ("Datasets", "▣  Datasets"), ("Build & Train", "⚙  Train"), ("Evaluate", "✓  Evaluate"), ("Interact", "◌  Chat"), ("Local API", "⌁  Advanced API")):
+            button = ttk.Button(sidebar, text=label, style="Nav.TButton", command=lambda n=name: self._show_tab(n))
+            button.pack(fill="x", pady=3)
+            self._nav_buttons[name] = button
+        ttk.Label(sidebar, text="", style="SidebarSub.TLabel").pack(expand=True, fill="both")
+        self._settings_button = ttk.Button(sidebar, text="⚙  Settings", style="Settings.TButton", command=self._open_settings)
+        self._settings_button.pack(fill="x", pady=(0, 5))
+        ttk.Label(sidebar, text="Spaceslug Tiny · FP32", style="SidebarSub.TLabel").pack(anchor="w")
 
-        notebook.add(self._home_frame, text="Home")
-        notebook.add(self._datasets_frame, text="Datasets")
-        notebook.add(self._training_frame, text="Build & Train")
-        notebook.add(self._interact_frame, text="Interact")
-        notebook.add(self._api_frame, text="Local API")
+        content = ttk.Frame(shell, padding=(26, 22, 26, 12), style="Shell.TFrame")
+        content.grid(row=0, column=1, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(1, weight=1)
+        header = ttk.Frame(content, style="Shell.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        header.columnconfigure(0, weight=1)
+        self._screen_title = ttk.Label(header, text="Home", style="Title.TLabel")
+        self._screen_title.grid(row=0, column=0, sticky="w")
+        self._header_status = ttk.Label(header, text="Spaceslug Tiny  ·  GPU checking…", style="HeaderStatus.TLabel")
+        self._header_status.grid(row=0, column=1, sticky="e")
+
+        screen_container = ttk.Frame(content, style="Shell.TFrame")
+        screen_container.grid(row=1, column=0, sticky="nsew")
+        screen_container.columnconfigure(0, weight=1)
+        screen_container.rowconfigure(0, weight=1)
+        self._screen_container = screen_container
+        self._home_frame = self._build_home(screen_container)
+        self._datasets_frame = self._build_datasets(screen_container)
+        self._training_frame = self._build_training(screen_container)
+        self._evaluate_frame = self._build_evaluate(screen_container)
+        self._interact_frame = self._build_interact(screen_container)
+        self._api_frame = self._build_api(screen_container)
+        self._screen_frames = {
+            "Home": self._home_frame,
+            "Datasets": self._datasets_frame,
+            "Build & Train": self._training_frame,
+            "Evaluate": self._evaluate_frame,
+            "Interact": self._interact_frame,
+            "Local API": self._api_frame,
+        }
+        for frame in self._screen_frames.values():
+            frame.grid(row=0, column=0, sticky="nsew")
+        self._screen_frames["Home"].tkraise()
 
         self._status = tk.StringVar()
-        status_bar = ttk.Label(self.root, textvariable=self._status, anchor="w", relief="sunken", padding=(6, 3))
-        status_bar.pack(fill="x", side="bottom")
+        status_bar = ttk.Label(content, textvariable=self._status, anchor="w", style="Status.TLabel", padding=(0, 10, 0, 0))
+        status_bar.grid(row=2, column=0, sticky="ew")
+
+    def _configure_theme(self) -> None:
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self.root.configure(background="#10141d")
+        style.configure("Shell.TFrame", background="#10141d")
+        style.configure("Card.TFrame", background="#1b2533", relief="solid", borderwidth=1)
+        style.configure("CardEyebrow.TLabel", background="#1b2533", foreground="#72f0df", font=("TkDefaultFont", 8, "bold"))
+        style.configure("CardTitle.TLabel", background="#1b2533", foreground="#f1f6fb", font=("TkDefaultFont", 14, "bold"))
+        style.configure("CardDetail.TLabel", background="#1b2533", foreground="#9eacbd")
+        style.configure("Sidebar.TFrame", background="#171d29")
+        style.configure("Brand.TLabel", background="#171d29", foreground="#66e3d5", font=("TkDefaultFont", 16, "bold"))
+        style.configure("SidebarSub.TLabel", background="#171d29", foreground="#8e9aad", font=("TkDefaultFont", 9))
+        style.configure("Nav.TButton", background="#171d29", foreground="#dbe7f3", anchor="w", borderwidth=0, padding=(10, 10))
+        style.configure("Settings.TButton", background="#171d29", foreground="#8e9aad", anchor="w", borderwidth=0, padding=(2, 7))
+        style.map("Nav.TButton", background=[("active", "#253247"), ("pressed", "#30445b")], foreground=[("active", "#72f0df")])
+        style.map("Settings.TButton", background=[("active", "#253247")], foreground=[("active", "#72f0df")])
+        for widget_style in ("TEntry", "TSpinbox", "TCombobox"):
+            style.configure(widget_style, fieldbackground="#293241", background="#293241", foreground="#e5edf5", insertcolor="#e5edf5")
+        style.configure("TScrollbar", troughcolor="#171d29", background="#3b4a5e", arrowcolor="#dbe7f3")
+        style.configure("TListbox", background="#293241", foreground="#e5edf5", selectbackground="#3f6478", selectforeground="#ffffff")
+        style.configure("TNotebook", background="#10141d", borderwidth=0)
+        style.configure("TNotebook.Tab", background="#1c2533", foreground="#aebdce", padding=(10, 5))
+        style.configure("TFrame", background="#10141d")
+        style.configure("TLabelframe", background="#10141d", foreground="#dbe7f3")
+        style.configure("TLabelframe.Label", background="#10141d", foreground="#72f0df")
+        style.configure("TLabel", background="#10141d", foreground="#dbe7f3")
+        style.configure("Title.TLabel", background="#10141d", foreground="#f1f6fb", font=("TkDefaultFont", 23, "bold"))
+        style.configure("HeaderStatus.TLabel", background="#10141d", foreground="#8e9aad")
+        style.configure("Status.TLabel", background="#10141d", foreground="#718096")
+
+    def _open_settings(self) -> None:
+        self._show_tab("Home")
+        self._workspace_status.configure(text="Settings are available here: workspace paths, runtime target, and GPU readiness.")
+
+    def _show_tab(self, name: str) -> None:
+        self.controller.set_active_tab(name)
+        self._screen_frames[name].tkraise()
+        self.refresh()
 
     def _build_home(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook, padding=10)
-        ttk.Label(frame, text="Spaceslug-main desktop", font=("TkDefaultFont", 13, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Build a capable local model", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="A guided workspace for preparing data, training Spaceslug Tiny, and testing your model.", style="HeaderStatus.TLabel").pack(anchor="w", pady=(3, 12))
+
+        overview = ttk.Frame(frame, style="Shell.TFrame")
+        overview.pack(fill="x", pady=(0, 10))
+        overview.columnconfigure((0, 1), weight=1)
+        overview.rowconfigure(0, weight=1)
+        self._home_project_card = self._home_card(overview, 0, 0, "PROJECT", "No project yet", "Create a project by importing data below.")
+        self._home_hardware_card = self._home_card(overview, 0, 1, "HARDWARE", "Checking GPU…", "Runtime readiness will appear here.")
+        self._home_data_card = self._home_card(overview, 1, 0, "DATA", "No dataset selected", "Import sources or load a .dts bundle.")
+        self._home_model_card = self._home_card(overview, 1, 1, "MODEL PROGRESS", "Not started", "Your latest checkpoint and training state.")
 
         profile_box = ttk.LabelFrame(frame, text="Fixed Tiny profile", padding=8)
         profile_box.pack(fill="x", pady=(8, 4))
@@ -195,7 +327,7 @@ class DesktopApp:
         self._gpu_readiness_text = self._readonly_text(readiness_box, "Refresh to inspect the native runtime.", height=10)
         self._gpu_readiness_text.pack(fill="x", pady=(6, 0))
 
-        ttk.Label(frame, text="Tabs: Home · Datasets · Build & Train · Interact · Local API").pack(anchor="w", pady=(8, 0))
+        ttk.Label(frame, text="Workflow: Home · Datasets · Train · Evaluate · Chat · Advanced API").pack(anchor="w", pady=(8, 0))
         return frame
 
     def _build_datasets(self, notebook: ttk.Notebook) -> ttk.Frame:
@@ -330,6 +462,10 @@ class DesktopApp:
 
         self._loss_canvas = tk.Canvas(frame, width=_LOSS_CANVAS_WIDTH, height=_LOSS_CANVAS_HEIGHT, background="#0d1117", highlightthickness=0)
         self._loss_canvas.pack(fill="x", pady=4)
+        self._loss_canvas.bind("<MouseWheel>", lambda event: self._scroll_loss("scroll", -1 if event.delta > 0 else 1))
+        self._loss_canvas.bind("<Shift-MouseWheel>", lambda event: self._scroll_loss("scroll", -1 if event.delta > 0 else 1))
+        self._loss_canvas.bind("<Button-4>", lambda event: self._scroll_loss("scroll", -1))
+        self._loss_canvas.bind("<Button-5>", lambda event: self._scroll_loss("scroll", 1))
         self._loss_scroll = ttk.Scrollbar(frame, orient="horizontal", command=self._scroll_loss)
         self._loss_scroll.pack(fill="x")
         self._loss_view_start = 0
@@ -345,10 +481,43 @@ class DesktopApp:
         self._training_status_text.pack(fill="x", pady=(2, 0))
         return frame
 
+    def _build_evaluate(self, notebook: ttk.Notebook) -> ttk.Frame:
+        frame = ttk.Frame(notebook, padding=10)
+        ttk.Label(frame, text="Evaluate your model", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Keep evaluation examples separate from training data and inspect results before deployment.", style="HeaderStatus.TLabel").pack(anchor="w", pady=(3, 12))
+        cards = ttk.Frame(frame, style="Shell.TFrame")
+        cards.pack(fill="x")
+        self._evaluation_cards = {}
+        for column, (key, label, value) in enumerate((("chat", "CHAT BEHAVIOR", "Not evaluated"), ("coding", "CODING BEHAVIOR", "Not evaluated"), ("safety", "SAFETY", "Not evaluated"))):
+            card = self._home_card(cards, 0, column, label, value, "Run an approved evaluation set after training.")
+            self._evaluation_cards[key] = card
+        ttk.Button(frame, text="Run evaluation", command=self._run_evaluation).pack(anchor="w", pady=(8, 0))
+        details = ttk.LabelFrame(frame, text="Evaluation details", padding=10)
+        details.pack(fill="both", expand=True, pady=(12, 0))
+        self._evaluation_text = self._readonly_text(details, "No evaluation has been run yet.\n\nEvaluation execution remains separate from training and will never be claimed when the native read-only graph is unavailable.", height=14)
+        self._evaluation_text.pack(fill="both", expand=True)
+        return frame
+
+    def _run_evaluation(self) -> None:
+        try:
+            result = self.controller.run_evaluation()
+        except Exception as exc:
+            result = {"status": "error", "message": f"{type(exc).__name__}: {exc}"}
+        self._evaluation_text.configure(state="normal")
+        self._evaluation_text.delete("1.0", "end")
+        self._evaluation_text.insert("1.0", "\n".join(f"{key}: {value}" for key, value in result.items()))
+        self._evaluation_text.configure(state="disabled")
+        self.refresh()
+
     def _build_interact(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook, padding=10)
-        ttk.Label(frame, text="Interact", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
-
+        ttk.Label(frame, text="Chat with your model", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Ask questions, get coding help, or inspect the configured responder.", style="HeaderStatus.TLabel").pack(anchor="w", pady=(3, 12))
+        mode_row = ttk.Frame(frame, style="Shell.TFrame")
+        mode_row.pack(fill="x", pady=(0, 8))
+        ttk.Label(mode_row, text="Mode:").pack(side="left")
+        self._chat_mode = tk.StringVar(value="Chat")
+        ttk.Combobox(mode_row, textvariable=self._chat_mode, values=("Chat", "Coding Assistant", "Agent"), state="readonly", width=20).pack(side="left", padx=(8, 0))
         self._responder_label = ttk.Label(frame, text="", anchor="w", foreground="#555")
         self._responder_label.pack(anchor="w", pady=(2, 0))
         self._inference_status_label = ttk.Label(frame, text="", anchor="w", foreground="#555")
@@ -388,7 +557,7 @@ class DesktopApp:
     def _choose_local_file(self) -> None:
         path = filedialog.askopenfilename(
             title="Choose a local dataset source",
-            filetypes=[("Dataset sources", "*.txt *.md *.json *.jsonl *.pdf"), ("All files", "*.*")],
+            filetypes=[("Dataset sources", "*.txt *.md *.json *.jsonl *.pdf *.parquet"), ("All files", "*.*")],
         )
         if path:
             self.controller.set_dataset_file(path)
@@ -478,7 +647,9 @@ class DesktopApp:
         self.refresh()
 
     def _import_dataset(self) -> None:
-        path = filedialog.askopenfilename(title="Import dataset bundle", filetypes=[("Dataset bundles", "*.dts")])
+        # ``.dts`` bundles are deterministic directory bundles (not a single
+        # archive file), so askdirectory is required for the native file picker.
+        path = filedialog.askdirectory(title="Select Spaceslug dataset bundle (.dts directory)")
         if not path:
             return
         try:
@@ -674,7 +845,9 @@ class DesktopApp:
             self._loss_view_start = len(history) - window
         self.controller.loss.draw(self._loss_canvas, _LOSS_CANVAS_WIDTH, _LOSS_CANVAS_HEIGHT, start=self._loss_view_start, count=window)
         total = max(1, len(history) - window)
-        self._loss_scroll.set(self._loss_view_start / total, min(1.0, (self._loss_view_start + window) / max(window, len(history))))
+        first = self._loss_view_start / total if len(history) > window else 0.0
+        last = min(1.0, (self._loss_view_start + window) / max(window, len(history)))
+        self._loss_scroll.set(first, last)
 
     def refresh(self) -> None:
         self.controller.refresh_gpu_readiness_if_needed()
@@ -700,6 +873,35 @@ class DesktopApp:
         self._dataset_bundle_combo.configure(values=bundle_values)
         if self.controller.created_bundle in bundle_values:
             self._dataset_bundle_var.set(self.controller.created_bundle)
+        gate = snapshot["training"]["native_gpu_readiness"]
+        gpu_title = "GPU ready" if gate["ready"] else "GPU unavailable"
+        gpu_detail = gate["reason"]
+        self._set_home_card(self._home_hardware_card, gpu_title, gpu_detail)
+        dataset_title = f"{snapshot['import_count']} imported source(s)"
+        dataset_detail = snapshot["created_bundle"] or "No .dts training bundle selected yet."
+        self._set_home_card(self._home_data_card, dataset_title, dataset_detail)
+        training = snapshot["training"]
+        self._set_home_card(self._home_model_card, training["state"].replace("_", " ").title(), f"{training['completed_steps']} steps completed · {snapshot['profile']['model_id']}")
+        evaluation = snapshot.get("evaluation")
+        if evaluation:
+            self._evaluation_text.configure(state="normal")
+            self._evaluation_text.delete("1.0", "end")
+            self._evaluation_text.insert("1.0", "\n".join(f"{key}: {value}" for key, value in evaluation.items()))
+            self._evaluation_text.configure(state="disabled")
+        project_title = snapshot["dataset_id"] or "Untitled project"
+        self._set_home_card(self._home_project_card, project_title, "Current workspace project and training target.")
+        self._screen_title.configure(text=snapshot["active_tab"] if snapshot["active_tab"] != "Build & Train" else "Train")
+        self._header_status.configure(text=f"{snapshot['profile']['model_id']}  ·  {'GPU ready' if gate['ready'] else 'CPU fallback'}")
+        if snapshot["training"]["result"]:
+            result = snapshot["training"]["result"]
+            outcome = "Complete" if not result.get("stopped_reason") else result["stopped_reason"].replace("_", " ").title()
+            self._set_home_card(self._home_model_card, outcome, f"Loss {result['initial_train_loss']:.4f} → {result['final_train_loss']:.4f}")
+            self._set_home_card(self._evaluation_cards["chat"], "Ready to review", "Run approved prompts in Evaluate.")
+            self._set_home_card(self._evaluation_cards["coding"], "Ready to review", "Compare before and after outputs.")
+            self._set_home_card(self._evaluation_cards["safety"], "Not evaluated", "Keep safety checks explicit.")
+        for name, button in self._nav_buttons.items():
+            button.state(["pressed"] if name == snapshot["active_tab"] else ["!pressed"])
+
         responder = snapshot["responder"]
         self._responder_label.configure(text=f"responder: {responder['backend']} / {responder['model']}")
         inference = snapshot["inference"]
@@ -723,12 +925,12 @@ class DesktopApp:
             self._api_stop_button.configure(state="disabled")
 
     def run(self) -> None:
-        try:
-            self.controller.refresh_runtime()
-            self.controller.initialize_inference()
-        except Exception:
-            self.controller.initialize_inference()
+        # Do not probe Vulkan or construct the inference backend on Tk's main
+        # thread.  The first frame appears immediately while the worker warms
+        # the custom RADV runtime and publishes an immutable readiness snapshot.
+        self.controller.start_background_gpu_readiness()
         self.refresh()
+        self._schedule_gpu_readiness_poll()
         self.root.mainloop()
 
 

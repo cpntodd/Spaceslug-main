@@ -1,0 +1,106 @@
+#version 450
+
+// fp16pack: packed <-> word layout bridging for fp16 and int8, so the cactus
+// backend can stage packed host tensors into the one-value-per-uint32 layout the
+// M6c-1 kernels expect, and pack the results back.
+//
+// Direction selected by push constant:
+//   mode 0 : packed u16  -> uint32 words (fp16 in low 16 bits)          widen fp16
+//   mode 1 : uint32 words -> packed u16 (low 16 bits)                   narrow fp16
+//   mode 2 : packed int8  -> int32 words (sign-extended)                widen int8
+//   mode 3 : int32 words -> packed int8 (clamped to [-128, 127])        narrow int8
+//   mode 4 : packed uint8 -> uint32 words (zero-extended)               widen uint8
+//   mode 5 : uint32 words -> packed uint8 (low byte)                    narrow uint8
+//
+// One thread per OUTPUT word, so there is never a read-modify-write race on the
+// output buffer. `count` is the number of ELEMENTS (not bytes/words). Input is
+// always read as uint32 words; the byte/nibble interpretation is local.
+//
+// gfx803: 256 threads = 4 wave64; no LDS; fp32-free (pure bit movement).
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer InBuf  { uint in_data[];  };
+layout(std430, binding = 1) writeonly buffer OutBuf { uint out_data[]; };
+
+layout(push_constant) uniform PC {
+    uint mode;  // 0 u16->u32, 1 u32->u16, 2 i8->i32, 3 i32->i8
+    uint count; // number of elements
+} pc;
+
+// read the i-th uint16 from a packed byte buffer (little-endian halves)
+uint read_u16(uint i) {
+    uint word = in_data[i >> 1u];
+    uint lane = i & 1u;
+    return (word >> (lane * 16u)) & 0xFFFFu;
+}
+
+// read the i-th int8 from a packed byte buffer (little-endian lanes)
+int read_i8(uint i) {
+    uint word = in_data[i >> 2u];
+    uint lane = i & 3u;
+    uint byte = (word >> (lane * 8u)) & 0xFFu;
+    return (byte >= 0x80u) ? int(byte) - 256 : int(byte);
+}
+
+// read the i-th uint8 from a packed byte buffer (little-endian lanes, zero-ext)
+uint read_u8(uint i) {
+    uint word = in_data[i >> 2u];
+    uint lane = i & 3u;
+    return (word >> (lane * 8u)) & 0xFFu;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (pc.mode == 0u) {
+        // packed u16 -> one fp16 per uint32 word
+        if (gid >= pc.count) return;
+        out_data[gid] = read_u16(gid);
+    } else if (pc.mode == 1u) {
+        // one fp16 per uint32 -> packed u16 (2 per output word)
+        uint nwords = (pc.count + 1u) / 2u;
+        if (gid >= nwords) return;
+        uint i0 = gid * 2u;
+        uint lo = in_data[i0] & 0xFFFFu;
+        uint hi = 0u;
+        if (i0 + 1u < pc.count) hi = in_data[i0 + 1u] & 0xFFFFu;
+        out_data[gid] = lo | (hi << 16u);
+    } else if (pc.mode == 2u) {
+        // packed int8 -> one int8 per int32 word (sign-extended)
+        if (gid >= pc.count) return;
+        out_data[gid] = uint(read_i8(gid));
+    } else if (pc.mode == 3u) {
+        // int32 words -> packed int8 (4 per output word, clamped)
+        uint nwords = (pc.count + 3u) / 4u;
+        if (gid >= nwords) return;
+        uint i0 = gid * 4u;
+        uint word = 0u;
+        for (uint lane = 0u; lane < 4u; ++lane) {
+            uint idx = i0 + lane;
+            if (idx >= pc.count) break;
+            int v = int(in_data[idx]);
+            int c = clamp(v, -128, 127);
+            uint b = uint(c) & 0xFFu;
+            word |= b << (lane * 8u);
+        }
+        out_data[gid] = word;
+    } else if (pc.mode == 4u) {
+        // packed uint8 -> one byte per uint32 word (zero-extended)
+        if (gid >= pc.count) return;
+        out_data[gid] = read_u8(gid);
+    } else {
+        // uint32 words -> packed uint8 (4 low bytes per output word)
+        uint nwords = (pc.count + 3u) / 4u;
+        if (gid >= nwords) return;
+        uint i0 = gid * 4u;
+        uint word = 0u;
+        for (uint lane = 0u; lane < 4u; ++lane) {
+            uint idx = i0 + lane;
+            if (idx >= pc.count) break;
+            uint b = in_data[idx] & 0xFFu;
+            word |= b << (lane * 8u);
+        }
+        out_data[gid] = word;
+    }
+}

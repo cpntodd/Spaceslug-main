@@ -1,0 +1,23 @@
+#version 450
+// Four packed adapter SGD updates. A/B and dA/dB are [4,64,R]/[4,R,64].
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) buffer ABuffer { float a[]; };
+layout(std430, binding = 1) buffer BBuffer { float b[]; };
+layout(std430, binding = 2) readonly buffer DABuffer { float da[]; };
+layout(std430, binding = 3) readonly buffer DBBuffer { float db[]; };
+layout(push_constant) uniform PC { uint rank; float learning_rate; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint elements = 4u * 64u * pc.rank;
+    if (id >= elements) return;
+    float ga = da[id];
+    float gb = db[id];
+    // Fail-safe bound for the fixed Tiny profile: one pathological output
+    // projection gradient must not poison persistent adapter state.
+    ga = (isnan(ga) || isinf(ga)) ? 0.0 : clamp(ga, -100.0, 100.0);
+    gb = (isnan(gb) || isinf(gb)) ? 0.0 : clamp(gb, -100.0, 100.0);
+    float old_a = (isnan(a[id]) || isinf(a[id])) ? 0.0 : a[id];
+    float old_b = (isnan(b[id]) || isinf(b[id])) ? 0.0 : b[id];
+    a[id] = clamp(old_a - pc.learning_rate * ga, -1.0, 1.0);
+    b[id] = clamp(old_b - pc.learning_rate * gb, -1.0, 1.0);
+}

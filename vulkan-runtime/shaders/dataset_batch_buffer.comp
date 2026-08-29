@@ -1,0 +1,22 @@
+#version 450
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer Tokens { uint tokens[]; };
+layout(std430, binding = 1) readonly buffer Targets { uint targets[]; };
+layout(std430, binding = 2) readonly buffer Masks { uint masks[]; };
+layout(std430, binding = 3) readonly buffer Controls { uint controls[]; };
+layout(std430, binding = 4) buffer Results { float results[]; };
+layout(push_constant) uniform Params { uint window_tokens; uint window_count; } params;
+
+void main() {
+    uint window = gl_WorkGroupID.x;
+    if (window >= params.window_count || gl_LocalInvocationID.x != 0u) return;
+    uint base = window * params.window_tokens;
+    float loss = 0.0;
+    for (uint i = 0u; i < params.window_tokens; ++i) {
+        float error = float(tokens[base + i]) - float(targets[base + i]);
+        loss += float(masks[base + i]) * error * error;
+    }
+    results[window * 2u] = loss;
+    results[window * 2u + 1u] = float(controls[window]);
+}
+void main_unused() {}

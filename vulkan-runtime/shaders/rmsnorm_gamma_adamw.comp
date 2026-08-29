@@ -1,0 +1,9 @@
+#version 450
+// AdamW for RMSNorm scale gamma; one invocation per hidden lane.
+layout(local_size_x=256) in;
+layout(std430,binding=0) buffer Gamma{float gamma[];};
+layout(std430,binding=1) readonly buffer Grad{float grad[];};
+layout(std430,binding=2) buffer M{float m[];};
+layout(std430,binding=3) buffer V{float v[];};
+layout(push_constant) uniform PC{uint count;uint step;float lr;float beta1;float beta2;float eps;float decay;}pc;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=pc.count)return;float g=grad[i];float mi=pc.beta1*m[i]+(1.0-pc.beta1)*g;float vi=pc.beta2*v[i]+(1.0-pc.beta2)*g*g;m[i]=mi;v[i]=vi;float bc1=1.0-pow(pc.beta1,float(pc.step));float bc2=1.0-pow(pc.beta2,float(pc.step));gamma[i]=(1.0-pc.lr*pc.decay)*gamma[i]-pc.lr*(mi/bc1)/(sqrt(vi/bc2)+pc.eps);}

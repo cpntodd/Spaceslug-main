@@ -1,0 +1,14 @@
+#version 450
+// Bounded FFN backward primitive. Computes dx for y=x+GELU(xW1+b1)W2+b2.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer X { float x[]; };
+layout(std430,binding=1) readonly buffer W1 { float w1[]; };
+layout(std430,binding=2) readonly buffer B1 { float b1[]; };
+layout(std430,binding=3) readonly buffer W2 { float w2[]; };
+layout(std430,binding=4) readonly buffer DY { float dy[]; };
+layout(std430,binding=5) writeonly buffer DX { float dx[]; };
+layout(std430,binding=6) readonly buffer Mask { uint mask[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; uint intermediate; } pc;
+const float A=0.7978845608028654;
+float gd(float z){float t=tanh(A*(z+0.044715*z*z*z));float u=A*(1.0+3.0*0.044715*z*z);return 0.5*(1.0+t)+0.5*z*(1.0-t*t)*u;}
+void main(){uint id=gl_GlobalInvocationID.x;if(id>=pc.rows*pc.hidden)return;uint r=id/pc.hidden,o=id%pc.hidden,b=r*pc.hidden;if(mask[r]==0u){dx[id]=0.0;return;}float result=dy[id];for(uint j=0;j<pc.intermediate;++j){float z=b1[j];for(uint i=0;i<pc.hidden;++i)z+=x[b+i]*w1[i*pc.intermediate+j];float q=0.;for(uint k=0;k<pc.hidden;++k)q+=dy[b+k]*w2[j*pc.hidden+k];result+=gd(z)*q*w1[o*pc.intermediate+j];}dx[id]=result;}

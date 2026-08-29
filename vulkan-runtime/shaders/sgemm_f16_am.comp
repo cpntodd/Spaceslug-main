@@ -1,0 +1,186 @@
+#version 450
+
+// sgemm_f16_am: C[M x N] = A[M x K] * B^T[N x K]^T, fp16 storage, fp32 accum,
+// arbitrary M and N (K still a multiple of 32). Bounds-checked variant of
+// sgemm_f16 for the cactus LLM decode path where M == 1 (single token) or M is
+// otherwise not a multiple of 64.
+//
+// Layout (mirrors cactus_matmul_f16): A row-major [M][K]; B PRE-TRANSPOSED
+// [N][K] (B[n][k] is the original B[k][n]). C row-major [M][N]. So
+//   C[m][n] = sum_k A[m][k] * B_t[n][k].
+//
+// PACKED fp16 storage (M7a): A, B, and C are packed 2 fp16 per uint32.
+//   element index i  ->  word i>>1, lane i&1 (0 = low 16 bits, 1 = high 16 bits)
+// i.e. the even-indexed element lives in the LOW half, the odd-indexed element
+// in the HIGH half. This is byte-identical to fp16pack mode 1 (u32->u16) and
+// packHalf2x16(vec2(lo, hi)), so the backend's fp16pack produces/consumes it
+// directly. Halving operand + result GLOBAL-memory traffic is the gfx803 win.
+//
+// 64x64 output tile, 256 threads (16x16 grid = 4 wave64 on gfx803). Each
+// thread owns a 4x4 micro-tile (16 fp32 accumulators). K streams in BK=32
+// chunks; the A tile (64x32) and B tile (64x32, n x k) are staged in LDS as
+// fp32 (unpacked on load — gfx803 has no fp16 ALU). The inner FMA loop is
+// unchanged from sgemm_f16 (ds_read + FMA).
+//
+// The only delta vs sgemm_f16 is bounds handling: the grid is
+// (ceil(N/64), ceil(M/64)), and the partial edge tiles guard every LDS staging
+// load (writing 0.0 for out-of-range rows/cols) and every C store. Full tiles
+// take the same branch-free fast path as sgemm_f16; only the last row/col tile
+// diverges, and only in the staging phase (the FMA inner loop stays branch-free).
+//
+// gfx803 rules: LDS = 2 * (64 * 34 floats) = 17408 B < 32 KB; row stride 34
+// (== 2 mod 32) avoids bank conflicts; fp32 FMA only. (The packed fp16 win is
+// in GLOBAL traffic — 4 KB per operand tile read, 2048 words per C tile written
+// — not LDS, which keeps fp32 staging for the FMA loop.)
+//
+// Host contract: K % 32 == 0, K % 2 == 0 (M and N arbitrary; N may be odd — the
+// last column is written into the low half of its word and the unused high half
+// is zeroed).
+
+#define BM 64
+#define BN 64
+#define BK 32
+#define APAD 34
+#define BPAD 34
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A { uint a[]; }; // [M][K] packed fp16
+layout(std430, binding = 1) readonly  buffer B { uint b[]; }; // [N][K] packed fp16, pre-transposed
+layout(std430, binding = 2) writeonly buffer C { uint c[]; }; // [M][N] packed fp16
+
+layout(push_constant) uniform PC {
+    uint M;
+    uint N;
+    uint K;
+} pc;
+
+shared float sa[BM * APAD]; // A tile: 64 x 32 (fp32, unpacked)
+shared float sb[BN * BPAD]; // B tile: 64 x 32 (n x k, fp32, unpacked)
+
+void main() {
+    uint tx = gl_LocalInvocationID.x; // 0..15
+    uint ty = gl_LocalInvocationID.y; // 0..15
+    uint tid = ty * 16u + tx;
+
+    uint tile_m = gl_WorkGroupID.y;
+    uint tile_n = gl_WorkGroupID.x;
+    uint gm = tile_m * BM;
+    uint gn = tile_n * BN;
+
+    uint r0 = ty * 4u;
+    uint c0 = tx * 4u;
+
+    vec4 acc[4];
+    acc[0] = vec4(0.0);
+    acc[1] = vec4(0.0);
+    acc[2] = vec4(0.0);
+    acc[3] = vec4(0.0);
+
+    for (uint k0 = 0u; k0 < pc.K; k0 += BK) {
+        // stage A tile (BM x BK) from packed fp16: 2048 elems = 1024 words,
+        // 256 threads = 4 words each (each word -> 2 LDS floats).
+        for (uint r = 0u; r < 4u; ++r) {
+            uint widx = tid + r * 256u;   // 0..1023
+            uint wrow = widx / 16u;       // 0..63 (BK/2 = 16 words per row)
+            uint wcol2 = (widx & 15u) * 2u; // even k-local 0..30
+            uint grow = gm + wrow;
+            uint gcol0 = k0 + wcol2;      // even global k
+            float lo = 0.0;
+            float hi = 0.0;
+            if (grow < pc.M) {
+                // K is even and gcol0 is even, so (grow*K + gcol0) is even:
+                // its word holds element(lo) + element+1(hi) together.
+                vec2 h = unpackHalf2x16(a[(grow * pc.K + gcol0) >> 1u]);
+                lo = h.x;
+                hi = h.y;
+            }
+            sa[wrow * APAD + wcol2] = lo;
+            sa[wrow * APAD + wcol2 + 1u] = hi;
+        }
+
+        // stage B tile (BN x BK) from pre-transposed packed B[N][K]: same shape.
+        for (uint r = 0u; r < 4u; ++r) {
+            uint widx = tid + r * 256u;
+            uint wrow = widx / 16u;       // n_local 0..63
+            uint wcol2 = (widx & 15u) * 2u;
+            uint grow = gn + wrow;
+            uint gcol0 = k0 + wcol2;
+            float lo = 0.0;
+            float hi = 0.0;
+            if (grow < pc.N) {
+                vec2 h = unpackHalf2x16(b[(grow * pc.K + gcol0) >> 1u]);
+                lo = h.x;
+                hi = h.y;
+            }
+            sb[wrow * BPAD + wcol2] = lo;
+            sb[wrow * BPAD + wcol2 + 1u] = hi;
+        }
+
+        barrier();
+
+        for (uint k = 0u; k < BK; k += 2u) {
+            vec2 a0 = vec2(sa[(r0 + 0u) * APAD + k], sa[(r0 + 0u) * APAD + k + 1u]);
+            vec2 a1 = vec2(sa[(r0 + 1u) * APAD + k], sa[(r0 + 1u) * APAD + k + 1u]);
+            vec2 a2 = vec2(sa[(r0 + 2u) * APAD + k], sa[(r0 + 2u) * APAD + k + 1u]);
+            vec2 a3 = vec2(sa[(r0 + 3u) * APAD + k], sa[(r0 + 3u) * APAD + k + 1u]);
+
+            vec4 bk0 = vec4(sb[(c0 + 0u) * BPAD + k], sb[(c0 + 1u) * BPAD + k],
+                            sb[(c0 + 2u) * BPAD + k], sb[(c0 + 3u) * BPAD + k]);
+            vec4 bk1 = vec4(sb[(c0 + 0u) * BPAD + k + 1u], sb[(c0 + 1u) * BPAD + k + 1u],
+                            sb[(c0 + 2u) * BPAD + k + 1u], sb[(c0 + 3u) * BPAD + k + 1u]);
+
+            acc[0] += bk0 * a0.xxxx;
+            acc[0] += bk1 * a0.yyyy;
+            acc[1] += bk0 * a1.xxxx;
+            acc[1] += bk1 * a1.yyyy;
+            acc[2] += bk0 * a2.xxxx;
+            acc[2] += bk1 * a2.yyyy;
+            acc[3] += bk0 * a3.xxxx;
+            acc[3] += bk1 * a3.yyyy;
+        }
+
+        barrier();
+    }
+
+    // Store C packed: two adjacent columns per word. The thread's global first
+    // column is gcol = gn + c0 (even, since gn and c0 are both even), so the
+    // pairs (gcol,gcol+1) and (gcol+2,gcol+3) map to words (gcol>>1) and
+    // (gcol>>1)+1. The word index must include the tile-N offset gn>>1 — using
+    // only the local c0>>1 makes tiles beyond the first write into the
+    // tile_n==0 column region.
+    uint Nw = (pc.N + 1u) / 2u; // words per C row (ceil(N/2))
+    uint gcol = gn + c0;        // global column of this thread's first column
+    uint wrow = gcol >> 1u;     // global word index within this thread's row
+
+    uint crow0 = gm + r0;
+
+    // row 0
+    if (crow0 < pc.M) {
+        if (gcol < pc.N) c[crow0 * Nw + wrow] =
+            packHalf2x16(vec2(acc[0].x, (gcol + 1u < pc.N) ? acc[0].y : 0.0));
+        if (gcol + 2u < pc.N) c[crow0 * Nw + wrow + 1u] =
+            packHalf2x16(vec2(acc[0].z, (gcol + 3u < pc.N) ? acc[0].w : 0.0));
+    }
+    // row 1
+    if (crow0 + 1u < pc.M) {
+        if (gcol < pc.N) c[(crow0 + 1u) * Nw + wrow] =
+            packHalf2x16(vec2(acc[1].x, (gcol + 1u < pc.N) ? acc[1].y : 0.0));
+        if (gcol + 2u < pc.N) c[(crow0 + 1u) * Nw + wrow + 1u] =
+            packHalf2x16(vec2(acc[1].z, (gcol + 3u < pc.N) ? acc[1].w : 0.0));
+    }
+    // row 2
+    if (crow0 + 2u < pc.M) {
+        if (gcol < pc.N) c[(crow0 + 2u) * Nw + wrow] =
+            packHalf2x16(vec2(acc[2].x, (gcol + 1u < pc.N) ? acc[2].y : 0.0));
+        if (gcol + 2u < pc.N) c[(crow0 + 2u) * Nw + wrow + 1u] =
+            packHalf2x16(vec2(acc[2].z, (gcol + 3u < pc.N) ? acc[2].w : 0.0));
+    }
+    // row 3
+    if (crow0 + 3u < pc.M) {
+        if (gcol < pc.N) c[(crow0 + 3u) * Nw + wrow] =
+            packHalf2x16(vec2(acc[3].x, (gcol + 1u < pc.N) ? acc[3].y : 0.0));
+        if (gcol + 2u < pc.N) c[(crow0 + 3u) * Nw + wrow + 1u] =
+            packHalf2x16(vec2(acc[3].z, (gcol + 3u < pc.N) ? acc[3].w : 0.0));
+    }
+}

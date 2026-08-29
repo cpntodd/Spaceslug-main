@@ -100,7 +100,8 @@ def integrated_tiny_embedding_sgd_capability(*, available: bool = False, runtime
         "trainable_parameter_groups": ["embeddings"],
         "dataset_integration": False,
         "retained_training": False,
-        "positions_supported": False,
+        "positions_supported": True,
+        "positions_optimizer": "sgd",
         "ffn_supported": False,
         "normalization_supported": False,
         "rows_max": 128,
@@ -109,6 +110,32 @@ def integrated_tiny_embedding_sgd_capability(*, available: bool = False, runtime
         "runtime_capability": runtime_capability,
         "contract": "persistent Tiny graph owns embedding gradients and sparse SGD; host owns token windows and checkpoints",
         "boundary": "graph-owned integrated embedding SGD is distinct from standalone caller-supplied embedding SGD; datasets and retained buffers remain host-owned",
+    }
+
+
+def integrated_tiny_positions_sgd_capability(*, available: bool = False, runtime_capability: str | None = None) -> dict[str, Any]:
+    """Return the bounded graph-owned positional-table SGD contract."""
+    return {
+        "operation": "tiny_graph_owned_positions_table_sgd",
+        "parameter_group": "positions",
+        "status": "available" if available else "unsupported",
+        "native_binding": available,
+        "integrated_graph_sgd": available,
+        "graph_owned_positions": True,
+        "standalone_api": False,
+        "activation_source": "graph-owned-forward-backward-dstate",
+        "optimizer": "sgd",
+        "trainable_parameter_groups": ["positions"],
+        "dataset_integration": False,
+        "retained_training": False,
+        "adamw": False,
+        "checkpoint_integration": False,
+        "rows_max": 128,
+        "return_code_when_unavailable": -5,
+        "return_code": 0 if available else -5,
+        "runtime_capability": runtime_capability,
+        "contract": "persistent Tiny graph owns the Tcap×H position table and applies masked dstate SGD in one normal submission",
+        "boundary": "position-table SGD is distinct from sinusoidal position generation; AdamW, datasets, retained buffers, and full-base training remain unsupported",
     }
 
 
@@ -165,4 +192,4 @@ def native_fp32_lm_head_training_plan(*, hidden_size: int, vocab_size: int) -> d
     }
 
 
-__all__ = ["integrated_tiny_embedding_sgd_capability", "integrated_tiny_group_adamw_capability", "integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]
+__all__ = ["integrated_tiny_embedding_sgd_capability", "integrated_tiny_group_adamw_capability", "integrated_tiny_lm_head_adamw_capability", "integrated_tiny_lm_head_capability", "integrated_tiny_positions_sgd_capability", "native_fp32_lm_head_capability", "native_fp32_lm_head_training_plan"]

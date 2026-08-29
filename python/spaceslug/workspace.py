@@ -35,7 +35,7 @@ from .dataset import DatasetBundle, create_bundle
 
 DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
-ALLOWED_LOCAL_EXTENSIONS = (".txt", ".md", ".json", ".jsonl", ".pdf")
+ALLOWED_LOCAL_EXTENSIONS = (".txt", ".md", ".json", ".jsonl", ".pdf", ".parquet")
 _READ_CHUNK = 64 * 1024
 _USER_AGENT = "spaceslug-ingest/0.1"
 _PDFTOTEXT = "pdftotext"
@@ -164,6 +164,8 @@ def infer_kind(name: str, content_type: str | None = None) -> str:
         return "html"
     if suffix == ".pdf":
         return "pdf"
+    if suffix == ".parquet":
+        return "parquet"
     return "txt"
 
 
@@ -395,6 +397,19 @@ def extract_text(
         return [_record(source_id, 0, "html", _extract_html_text(data))]
     if kind == "pdf":
         return extract_pdf_text(data, source_id, runner=pdftotext_runner, temp_dir=temp_dir)
+    if kind == "parquet":
+        try:
+            import pyarrow.parquet as parquet
+        except ImportError as exc:
+            raise UnsupportedKindError("Parquet import requires optional pyarrow; install it in the active virtual environment") from exc
+        with tempfile.NamedTemporaryFile(suffix=".parquet") as staging:
+            staging.write(data)
+            staging.flush()
+            try:
+                rows = parquet.read_table(staging.name).to_pylist()
+            except Exception as exc:
+                raise IngestionError(f"could not read Parquet dataset: {exc}") from exc
+        return [_record_from_value(row, source_id, index, "parquet") for index, row in enumerate(rows)]
     raise UnsupportedKindError(f"unsupported source kind {kind!r}")
 
 

@@ -1,0 +1,18 @@
+#version 450
+// Frozen linear projection backward: dX[M,K] = dY[M,N] * W[K,N]^T.
+// Row-major W[K,N], fp32. One lane computes one dX element.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer DYBuffer { float dy[]; };
+layout(std430, binding = 1) readonly buffer WeightBuffer { float weight[]; };
+layout(std430, binding = 2) buffer DXBuffer { float dx[]; };
+layout(push_constant) uniform PC { uint rows; uint input_size; uint output_size; uint accumulate; } pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= pc.rows * pc.input_size) return;
+    uint row = id / pc.input_size;
+    uint input_index = id % pc.input_size;
+    float value = 0.0;
+    for (uint output_index = 0u; output_index < pc.output_size; ++output_index) value += dy[row * pc.output_size + output_index] * weight[input_index * pc.output_size + output_index];
+    if (pc.accumulate != 0u) dx[id] += value;
+    else dx[id] = value;
+}

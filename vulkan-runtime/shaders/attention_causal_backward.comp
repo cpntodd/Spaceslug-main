@@ -1,0 +1,13 @@
+#version 450
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430,binding=0) readonly buffer QBuffer { float q[]; };
+layout(std430,binding=1) readonly buffer KBuffer { float k[]; };
+layout(std430,binding=2) readonly buffer VBuffer { float v[]; };
+layout(std430,binding=3) readonly buffer DOutBuffer { float dout[]; };
+layout(std430,binding=4) writeonly buffer OutputBuffer { float result[]; };
+layout(push_constant) uniform PC { uint tokens; uint hidden; uint mode; } pc;
+float score(uint query,uint key){float x=0.;for(uint c=0u;c<pc.hidden;++c)x+=q[query*pc.hidden+c]*k[key*pc.hidden+c];return x/sqrt(float(pc.hidden));}
+float weight(uint query,uint key){float m=-3.402823466e+38;for(uint i=0u;i<=query;++i)m=max(m,score(query,i));float z=0.;for(uint i=0u;i<=query;++i)z+=exp(score(query,i)-m);return exp(score(query,key)-m)/z;}
+void main(){uint id=gl_GlobalInvocationID.x;if(id>=pc.tokens*pc.hidden)return;uint token=id/pc.hidden,channel=id%pc.hidden;float value=0.;
+if(pc.mode==0u){for(uint key=0u;key<=token;++key){float dw=0.,e=0.;for(uint c=0u;c<pc.hidden;++c)dw+=dout[token*pc.hidden+c]*v[key*pc.hidden+c];for(uint i=0u;i<=token;++i){float x=0.;for(uint c=0u;c<pc.hidden;++c)x+=dout[token*pc.hidden+c]*v[i*pc.hidden+c];e+=weight(token,i)*x;}value+=weight(token,key)*(dw-e)*k[key*pc.hidden+channel]/sqrt(float(pc.hidden));}}
+else{for(uint query=token;query<pc.tokens;++query){float dw=0.,e=0.;for(uint c=0u;c<pc.hidden;++c)dw+=dout[query*pc.hidden+c]*v[token*pc.hidden+c];for(uint i=0u;i<=query;++i){float x=0.;for(uint c=0u;c<pc.hidden;++c)x+=dout[query*pc.hidden+c]*v[i*pc.hidden+c];e+=weight(query,i)*x;}float w=weight(query,token);value+=pc.mode==1u?w*(dw-e)*q[query*pc.hidden+channel]/sqrt(float(pc.hidden)):w*dout[query*pc.hidden+channel];}} result[id]=value;}

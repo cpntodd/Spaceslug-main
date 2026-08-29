@@ -1,0 +1,32 @@
+#version 450
+// Deterministic FP32 dW[h,v] = sum_{t=0}^{Tcap-1} activation[t,h] * dlogits[t,v].
+// Invalid rows and padded vocabulary lanes contribute exactly zero.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer ActivationBuffer { float activation[]; };
+layout(std430, binding = 1) readonly buffer DLogitsBuffer { float dlogits[]; };
+layout(std430, binding = 2) writeonly buffer GradientBuffer { float gradient[]; };
+layout(push_constant) uniform PC {
+    uint rows;
+    uint tcap;
+    uint vocab;
+    uint padded_vocab;
+    uint hidden;
+    uint accumulate;
+} pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint count = pc.hidden * pc.padded_vocab;
+    if (id >= count) return;
+    uint h = id / pc.padded_vocab;
+    uint token = id % pc.padded_vocab;
+    float sum = 0.0;
+    if (pc.accumulate == 0u) gradient[id] = 0.0;
+    if (token < pc.vocab) {
+        for (uint t = 0u; t < pc.tcap; ++t) {
+            if (t < pc.rows) sum += activation[t * pc.hidden + h] * dlogits[t * pc.padded_vocab + token];
+        }
+    }
+    if (pc.accumulate == 0u) gradient[id] = sum;
+    else gradient[id] += sum;
+}
+

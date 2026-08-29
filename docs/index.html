@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d1d">
+  <meta name="description" content="Spaceslug — bringing local AI to older systems.">
+  <title>Spaceslug · Local AI for older systems</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="stars" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Spaceslug home"><span class="brand-mark">✦</span> SPACESLUG</a>
+    <nav aria-label="Primary navigation">
+      <a href="../README.md">Repository</a>
+      <a href="INDEX.md">Docs</a>
+      <a href="https://github.com/cpntodd/Spaceslug-main/discussions">Community</a>
+      <a class="nav-cta" href="https://github.com/cpntodd/Spaceslug-main">View on GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero shell">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="pulse"></span> OPEN HARDWARE · OPEN QUESTIONS</p>
+        <h1>Local AI,<br><em>kept in orbit.</em></h1>
+        <p class="lede">A transparent, community-built model lab and runtime for bringing capable local AI to older systems.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="../README.md">Explore the project <span>→</span></a>
+          <a class="button quiet" href="GPU_CONTRIBUTING.md">Add GPU support</a>
+        </div>
+        <p class="microcopy">CPU reference first · Vulkan acceleration second · evidence always visible</p>
+      </div>
+      <div class="orbit-art" aria-label="Abstract orbit illustration" role="img">
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit orbit-three"></div>
+        <div class="planet"><span>SL</span></div><span class="satellite satellite-a"></span><span class="satellite satellite-b"></span>
+      </div>
+    </section>
+
+    <section class="status-strip shell" aria-label="Project status">
+      <div><span class="status-dot"></span><strong>EXPERIMENTAL</strong><small>Building in public</small></div>
+      <div><strong>RX580 / RADV</strong><small>Validated target</small></div>
+      <div><strong>CPU → VULKAN</strong><small>Clear fallback contracts</small></div>
+      <div><strong>COMMUNITY</strong><small>Bring your hardware</small></div>
+    </section>
+
+    <section class="shell cards-section">
+      <div class="section-heading"><p class="eyebrow">THE MISSION</p><h2>Useful hardware has<br><em>more to give.</em></h2></div>
+      <div class="cards">
+        <article class="card card-glow"><span class="card-icon">◒</span><h3>Older GPUs welcome</h3><p>Start with the evidence-backed RX580/RADV path. Add Vulkan, CUDA, ROCm, Metal, or another backend through explicit capability gates.</p><a href="GPU_CONTRIBUTING.md">GPU contribution guide ↗</a></article>
+        <article class="card"><span class="card-icon">◇</span><h3>Models stay inspectable</h3><p>New models, tokenizers, adapters, and quantization paths come with provenance, shape contracts, fixtures, and honest limitations.</p><a href="MODEL_CONTRIBUTING.md">Model contribution guide ↗</a></article>
+        <article class="card"><span class="card-icon">⌁</span><h3>Experiments stay reproducible</h3><p>Commands, hardware, datasets, checksums, metrics, failures, and status are part of the result—not an afterthought.</p><a href="EXPERIMENTS.md">Experiment protocol ↗</a></article>
+      </div>
+    </section>
+
+    <section class="manifesto shell">
+      <div><p class="eyebrow">A SHARED FLIGHT PLAN</p><h2>Build it together.<br><em>Show the working.</em></h2></div>
+      <div class="manifesto-copy"><p>Spaceslug is for people with curious machines, constrained budgets, and useful ideas. Whether you are profiling a shader, adapting a model, documenting a failure, or taking your first local-AI step, your contribution can move the mission forward.</p><a class="text-link" href="../CONTRIBUTING.md">Read the contribution guide <span>↗</span></a></div>
+    </section>
+  </main>
+
+  <footer class="site-footer shell"><span>✦ SPACESLUG</span><span>Keep useful hardware useful. Keep the evidence visible.</span><span><a href="https://github.com/cpntodd/Spaceslug-main/issues">Issues</a> · <a href="../README.md">README</a></span></footer>
+</body>
+</html>

@@ -1,0 +1,56 @@
+#version 450
+
+// rope: rotary position embeddings, non-interleaved (GPT-NeoX layout), fp32.
+//
+// For token position p and channel pair i (0 <= i < D/2):
+//   theta = p / 10000^(2i/D)
+//   y[2i]   = x[2i]   * cos(theta) - x[2i+1] * sin(theta)
+//   y[2i+1] = x[2i+1] * cos(theta) + x[2i]   * sin(theta)
+//
+// The cos/sin tables are PRECOMPUTED ON THE HOST in double precision and
+// rounded to fp32 (T * D/2 floats each). This keeps the kernel to pure FMA
+// (no transcendentals in-kernel) so the GPU result tracks the double CPU
+// reference to within fp32 rounding (~1e-7) on both RADV and lavapipe. The
+// choice is deliberate: GCN's hardware V_SIN/V_COS argument reduction degrades
+// for the large thetas that occur at i=0 (theta up to ~127 rad here), which
+// would force a looser tolerance for no benefit.
+//
+// gfx803 (Polaris) rules:
+//   - wave64 only: 256 threads = 4 waves (multiple of 64).
+//   - trivial elementwise kernel: no LDS, fp32 FMA only.
+//   - D must be even (RoPE pairs channels); the host test uses T=128, D=64.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer X   { float x[]; }; // T * D
+layout(std430, binding = 1) readonly  buffer Cos { float c[]; }; // T * D/2
+layout(std430, binding = 2) readonly  buffer Sin { float s[]; }; // T * D/2
+layout(std430, binding = 3) writeonly buffer Y   { float y[]; }; // T * D
+
+layout(push_constant) uniform PC {
+    uint T; // tokens
+    uint D; // head dim (even)
+} pc;
+
+void main() {
+    uint halfD = pc.D / 2u;
+    uint totalPairs = pc.T * halfD;
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= totalPairs) {
+        return;
+    }
+
+    uint token = gid / halfD;
+    uint i = gid - token * halfD; // pair index within the token
+    uint ti = gid;                // flat cos/sin table index (same layout)
+
+    float c = c[ti];
+    float s = s[ti];
+
+    uint base = token * pc.D;
+    float x0 = x[base + 2u * i];
+    float x1 = x[base + 2u * i + 1u];
+
+    y[base + 2u * i]      = x0 * c - x1 * s;
+    y[base + 2u * i + 1u] = x1 * c + x0 * s;
+}

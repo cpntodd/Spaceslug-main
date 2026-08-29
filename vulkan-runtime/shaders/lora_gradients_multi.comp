@@ -1,0 +1,29 @@
+#version 450
+// Four Tiny adapters in one dispatch. X[M,D], dY per target [M,D], A[D,R],B[R,D].
+// target selects adapter and outputs dA/dB for that adapter.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer XBuffer { float x[]; };
+layout(std430, binding = 1) readonly buffer DYBuffer { float dy[]; };
+layout(std430, binding = 2) readonly buffer ABuffer { float a[]; };
+layout(std430, binding = 3) readonly buffer BBuffer { float b[]; };
+layout(std430, binding = 4) writeonly buffer DABuffer { float da[]; };
+layout(std430, binding = 5) writeonly buffer DBBuffer { float db[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; uint rank; uint target; } pc;
+uint adapter_offset() { return pc.target * pc.hidden * pc.rank; }
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint elements = pc.hidden * pc.rank;
+    if (id >= elements) return;
+    uint offset = adapter_offset();
+    uint row = id / pc.rank;
+    uint r = id % pc.rank;
+    float grad_a = 0.0;
+    for (uint sample_index = 0u; sample_index < pc.rows; ++sample_index) for (uint column = 0u; column < pc.hidden; ++column) grad_a += x[sample_index * pc.hidden + row] * dy[sample_index * pc.hidden + column] * b[offset + r * pc.hidden + column];
+    da[offset + id] = grad_a;
+    uint adapter_b_offset = pc.target * pc.rank * pc.hidden;
+    uint rank_index = id / pc.hidden;
+    uint column = id % pc.hidden;
+    float grad_b = 0.0;
+    for (uint sample_index = 0u; sample_index < pc.rows; ++sample_index) { float reduced = 0.0; for (uint k = 0u; k < pc.hidden; ++k) reduced += x[sample_index * pc.hidden + k] * a[offset + k * pc.rank + rank_index]; grad_b += reduced * dy[sample_index * pc.hidden + column]; }
+    db[adapter_b_offset + id] = grad_b;
+}

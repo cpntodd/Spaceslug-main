@@ -1,0 +1,12 @@
+#version 450
+// Graph-owned FP32 Q/K/V parameter gradients from Tiny backward states.
+layout(local_size_x=256) in;
+layout(std430,binding=0) readonly buffer States { float x[]; };
+layout(std430,binding=1) readonly buffer DQ { float dq[]; };
+layout(std430,binding=2) readonly buffer DK { float dk[]; };
+layout(std430,binding=3) readonly buffer DV { float dv[]; };
+layout(std430,binding=4) writeonly buffer GQ { float gq[]; };
+layout(std430,binding=5) writeonly buffer GK { float gk[]; };
+layout(std430,binding=6) writeonly buffer GV { float gv[]; };
+layout(push_constant) uniform PC { uint rows; uint tcap; uint hidden; } pc;
+void main(){uint id=gl_GlobalInvocationID.x,n=pc.hidden*pc.hidden;if(id>=3u*n)return;uint m=id/n,e=id%n,h=e/pc.hidden,o=e%pc.hidden;float s=0.;for(uint t=0u;t<pc.tcap;++t)if(t<pc.rows)s+=x[t*pc.hidden+h]*(m==0u?dq[t*pc.hidden+o]:(m==1u?dk[t*pc.hidden+o]:dv[t*pc.hidden+o]));if(m==0u)gq[e]=s;else if(m==1u)gk[e]=s;else gv[e]=s;}

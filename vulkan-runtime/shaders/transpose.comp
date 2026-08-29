@@ -1,0 +1,75 @@
+#version 450
+
+// transpose: B[N x M] = A[M x N]^T, fp32, both row-major.
+//
+// 64x64 output tile per workgroup, 256 threads (16x16 grid = 4 wave64 on
+// gfx803/Polaris). Each thread owns a 4x4 sub-tile: it loads A[4x4] into LDS,
+// then writes the same 4x4 sub-tile back to B with the row/col indices swapped.
+// The transpose happens in the *global* address arithmetic, not in the LDS
+// access pattern, so both phases read/write LDS in row-major order (no column
+// walk, no bank conflicts).
+//
+// gfx803 (Polaris) rules:
+//   - wave64 only: 256 threads = 4 waves (multiple of 64).
+//   - LDS <= 32 KB/workgroup. Here: 64 * 66 floats = 16896 B.
+//   - LDS row stride == 2 (mod 32) floats (66 for a 64-wide tile) so that
+//     successive rows land on different banks.
+//   - fp32 only; a transpose is a pure permutation so the host compares
+//     bitwise-exactly against a CPU reference.
+//
+// Non-divisible sizes are safe: out-of-range A reads are replaced with 0.0 and
+// the matching B store is guarded by a bounds check, so no garbage is ever
+// written and no uninitialized LDS is read. The host test uses 512x512.
+
+#define TILE 64
+#define TILEPAD 66 // LDS row stride: TILE + 2 (== 2 mod 32)
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer A { float a[]; };
+layout(std430, binding = 1) writeonly buffer B { float b[]; };
+
+layout(push_constant) uniform PC {
+    uint M; // rows of A (== cols of B)
+    uint N; // cols of A (== rows of B)
+} pc;
+
+shared float tile[TILE * TILEPAD]; // 64 * 66 * 4 = 16896 B
+
+void main() {
+    uint tx = gl_LocalInvocationID.x; // 0..15 -> sub-tile column group
+    uint ty = gl_LocalInvocationID.y; // 0..15 -> sub-tile row group
+
+    uint gm = gl_WorkGroupID.y * TILE; // tile row offset within A
+    uint gn = gl_WorkGroupID.x * TILE; // tile col offset within A
+
+    uint r0 = ty * 4u; // local row of this thread's 4x4 sub-tile
+    uint c0 = tx * 4u; // local col of this thread's 4x4 sub-tile
+
+    // ---- load 4x4 sub-tile from A into LDS ----
+    for (uint i = 0u; i < 4u; ++i) {
+        uint row = gm + r0 + i;
+        for (uint j = 0u; j < 4u; ++j) {
+            uint col = gn + c0 + j;
+            float v = 0.0;
+            if (row < pc.M && col < pc.N) {
+                v = a[row * pc.N + col];
+            }
+            tile[(r0 + i) * TILEPAD + (c0 + j)] = v;
+        }
+    }
+
+    barrier(); // LDS writes visible before the transposed store reads them
+
+    // ---- store 4x4 sub-tile to B with indices swapped ----
+    // B[gn + c][gm + r] = tile[r][c]  =>  B[col][row] = A[row][col].
+    for (uint j = 0u; j < 4u; ++j) {
+        uint brow = gn + c0 + j; // B row = A col
+        for (uint i = 0u; i < 4u; ++i) {
+            uint bcol = gm + r0 + i; // B col = A row
+            if (brow < pc.N && bcol < pc.M) {
+                b[brow * pc.M + bcol] = tile[(r0 + i) * TILEPAD + (c0 + j)];
+            }
+        }
+    }
+}

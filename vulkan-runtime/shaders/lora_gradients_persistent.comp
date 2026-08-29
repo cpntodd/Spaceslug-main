@@ -1,0 +1,44 @@
+#version 450
+// Persistent fixed-rank LoRA gradients for Q/K/V/output.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) readonly buffer States { float states[]; };
+layout(std430, binding = 1) readonly buffer DQ { float dq[]; };
+layout(std430, binding = 2) readonly buffer DK { float dk[]; };
+layout(std430, binding = 3) readonly buffer DV { float dv[]; };
+layout(std430, binding = 4) readonly buffer DOutput { float dout[]; };
+layout(std430, binding = 5) readonly buffer Activations { float activations[]; };
+layout(std430, binding = 6) readonly buffer DProjected { float dprojected[]; };
+layout(std430, binding = 7) readonly buffer A { float a[]; };
+layout(std430, binding = 8) readonly buffer B { float b[]; };
+layout(std430, binding = 9) buffer DA { float da[]; };
+layout(std430, binding = 10) buffer DB { float db[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; uint rank; uint target; uint accumulate; uint input_row; } pc;
+uint off() { return pc.target * pc.hidden * pc.rank; }
+float xv(uint row, uint col) {
+    uint source_row = pc.input_row + row;
+    return pc.target == 3u ? activations[source_row * pc.hidden + col] : states[source_row * pc.hidden + col];
+}
+float dyv(uint row, uint col) {
+    if (pc.target == 0u) return dq[row * pc.hidden + col];
+    if (pc.target == 1u) return dk[row * pc.hidden + col];
+    if (pc.target == 2u) return dv[row * pc.hidden + col];
+    return dprojected[row * pc.hidden + col];
+}
+void main() {
+    uint id = gl_GlobalInvocationID.x, n = pc.hidden * pc.rank;
+    if (id >= n) return;
+    uint base = off(), row = id / pc.rank, r = id % pc.rank;
+    float ga = 0.0;
+    for (uint m = 0u; m < pc.rows; ++m)
+        for (uint c = 0u; c < pc.hidden; ++c)
+            ga += xv(m, row) * dyv(m, c) * b[base + r * pc.hidden + c];
+    da[base + id] = pc.accumulate != 0u ? da[base + id] + ga : ga;
+    uint br = id / pc.hidden, col = id % pc.hidden;
+    float gb = 0.0;
+    for (uint m = 0u; m < pc.rows; ++m) {
+        float z = 0.0;
+        for (uint c = 0u; c < pc.hidden; ++c) z += xv(m, c) * a[base + c * pc.rank + br];
+        gb += z * dyv(m, col);
+    }
+    db[base + id] = pc.accumulate != 0u ? db[base + id] + gb : gb;
+}

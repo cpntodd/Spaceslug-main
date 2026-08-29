@@ -1,0 +1,9 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(std430,binding=0) readonly buffer X { float x[]; };
+layout(std430,binding=1) readonly buffer G { float gamma[]; };
+layout(std430,binding=2) readonly buffer D { float dy[]; };
+layout(std430,binding=3) writeonly buffer O { float dx[]; };
+layout(push_constant) uniform PC { uint rows; uint hidden; } pc;
+shared float s[256];
+void main(){uint r=gl_WorkGroupID.x,t=gl_LocalInvocationID.x;if(r>=pc.rows)return;uint b=r*pc.hidden;float q=0.;for(uint i=t;i<pc.hidden;i+=256)q+=x[b+i]*x[b+i];s[t]=q;barrier();for(uint z=128;z>0;z>>=1){if(t<z)s[t]+=s[t+z];barrier();}float inv=inversesqrt(s[0]/float(pc.hidden)+1e-5);q=0.;for(uint i=t;i<pc.hidden;i+=256)q+=x[b+i]*dy[b+i]*gamma[i];s[t]=q;barrier();for(uint z=128;z>0;z>>=1){if(t<z)s[t]+=s[t+z];barrier();}float c=s[0]*inv*inv*inv/float(pc.hidden);for(uint i=t;i<pc.hidden;i+=256)dx[b+i]=gamma[i]*inv*dy[b+i]-x[b+i]*c;}

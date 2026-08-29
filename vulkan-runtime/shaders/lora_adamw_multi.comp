@@ -1,0 +1,49 @@
+#version 450
+// Persistent AdamW update for four packed [4,64,R] / [4,R,64] adapters.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(std430, binding = 0) buffer ABuffer { float a[]; };
+layout(std430, binding = 1) buffer BBuffer { float b[]; };
+layout(std430, binding = 2) readonly buffer DABuffer { float da[]; };
+layout(std430, binding = 3) readonly buffer DBBuffer { float db[]; };
+layout(std430, binding = 4) buffer MABuffer { float ma[]; };
+layout(std430, binding = 5) buffer VABuffer { float va[]; };
+layout(std430, binding = 6) buffer MBBuffer { float mb[]; };
+layout(std430, binding = 7) buffer VBBuffer { float vb[]; };
+layout(push_constant) uniform PC {
+    uint rank;
+    uint step;
+    float learning_rate;
+    float beta1;
+    float beta2;
+    float epsilon;
+    float weight_decay;
+    float normalizer;
+} pc;
+void main() {
+    uint id = gl_GlobalInvocationID.x;
+    uint elements = 4u * 64u * pc.rank;
+    if (id >= elements) return;
+    float ga = da[id] / pc.normalizer;
+    float gb = db[id] / pc.normalizer;
+    // Keep a single pathological output-projection gradient from poisoning the
+    // persistent adapter state.  The bound is deliberately conservative for
+    // the fixed Tiny profile and is applied before moment updates.
+    ga = (isnan(ga) || isinf(ga)) ? 0.0 : clamp(ga, -100.0, 100.0);
+    gb = (isnan(gb) || isinf(gb)) ? 0.0 : clamp(gb, -100.0, 100.0);
+    float old_ma = (isnan(ma[id]) || isinf(ma[id])) ? 0.0 : ma[id];
+    float old_va = (isnan(va[id]) || isinf(va[id])) ? 0.0 : va[id];
+    float old_mb = (isnan(mb[id]) || isinf(mb[id])) ? 0.0 : mb[id];
+    float old_vb = (isnan(vb[id]) || isinf(vb[id])) ? 0.0 : vb[id];
+    float oma = ma[id] = clamp(pc.beta1 * old_ma + (1.0 - pc.beta1) * ga, -10000.0, 10000.0);
+    float ova = va[id] = clamp(pc.beta2 * old_va + (1.0 - pc.beta2) * ga * ga, 0.0, 1000000.0);
+    float omb = mb[id] = clamp(pc.beta1 * old_mb + (1.0 - pc.beta1) * gb, -10000.0, 10000.0);
+    float ovb = vb[id] = clamp(pc.beta2 * old_vb + (1.0 - pc.beta2) * gb * gb, 0.0, 1000000.0);
+    float bc1 = 1.0 - pow(pc.beta1, float(pc.step));
+    float bc2 = 1.0 - pow(pc.beta2, float(pc.step));
+    float mhat_a = oma / bc1;
+    float vhat_a = ova / bc2;
+    float mhat_b = omb / bc1;
+    float vhat_b = ovb / bc2;
+    a[id] = (1.0 - pc.learning_rate * pc.weight_decay) * a[id] - pc.learning_rate * mhat_a / (sqrt(vhat_a) + pc.epsilon);
+    b[id] = (1.0 - pc.learning_rate * pc.weight_decay) * b[id] - pc.learning_rate * mhat_b / (sqrt(vhat_b) + pc.epsilon);
+}

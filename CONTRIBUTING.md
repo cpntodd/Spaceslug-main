@@ -1,29 +1,48 @@
-# Contributing
+# Contributing to Spaceslug
 
-Spaceslug-main is currently a documentation-first greenfield repository. Do not implement engine code until the contracts in `docs/` have been reviewed.
+Welcome. Spaceslug is a community project for making local AI useful on older and capable hardware. Documentation, issue reports, reproducibility notes, model experiments, GPU profiling, and small test fixtures are all valuable contributions.
 
-## Rules
+> **Status:** Experimental. Keep claims narrow, evidence visible, and unknowns explicit.
 
-- Keep `vulkan-runtime` as a separate product and repository.
-- Treat `cactus-main`, `colibri-main`, and `needle-main` as references or import sources; do not silently fork their assumptions.
-- Add a CPU/reference test before adding a backend implementation.
-- Record model, dataset, code, hardware, precision, and artifact revisions in experiments.
+## Before you start
+
+1. Read the [documentation index](docs/INDEX.md).
+2. Check existing issues, decisions, roadmap, and devlog entries.
+3. For GPU work, read the [GPU contribution guide](docs/GPU_CONTRIBUTING.md).
+4. For models/adapters, read the [model contribution guide](docs/MODEL_CONTRIBUTING.md).
+5. For measurements, use the [experiment protocol](docs/EXPERIMENTS.md) and [report template](docs/experiments/EXPERIMENT_REPORT_TEMPLATE.md).
+
+## Contribution rules
+
+- Keep the CPU/reference path authoritative for correctness.
+- Add a reference test before adding or changing a backend implementation.
+- Make capability limits, fallbacks, precision, ownership, and tensor layouts explicit.
+- Record model, dataset, code, hardware, driver, precision, and artifact revisions.
+- Never publish private, restricted, or unlicensed source data or artifacts.
 - Never make a fallback silent in user-visible metrics.
-- Never apply autonomous source changes directly to the main branch.
 - Keep changes small, reversible, and independently testable.
+- Do not apply autonomous source changes directly to `main`; use a branch and review.
+- Treat Cactus, Colibri, and Needle as references/import sources; do not silently fork their assumptions.
 
-## Documentation expectations
+## Monorepo layout
 
-Architecture decisions belong in `docs/`. Artifact schema changes require versioning notes and compatibility behavior. Model changes require provenance and evaluation updates.
+- `python/` — host application and reference implementation.
+- `vulkan-runtime/` — native Vulkan runtime, shaders, and backend tests.
+- `docs/` — contracts, guides, decisions, devlogs, and evidence.
+- `datasets/`, `manifests/`, `experiments/`, `benchmarks/` — provenance and measurement surfaces.
 
-## Data and measurement rules
+## Pull requests
 
-- Preserve canonical dataset records; derived or lossy transformations create a new `.dts` revision.
-- Never publish private or licensed source data without documented permission and provenance.
-- Do not train on protected benchmark revisions; record dataset lineage and overlap checks.
-- Keep large datasets and run outputs outside ordinary Git history, referenced by checksums and retrieval instructions.
-- Devlogs must distinguish proposed, experimental, and validated work and must not invent measurements.
+Please include:
 
-## Planned checks
+- What changed and why.
+- Tests and exact commands run.
+- Hardware/backend/environment details when relevant.
+- Documentation and status-label updates.
+- Known failures, limitations, and follow-up work.
 
-The future repository should provide formatting, schema validation, dataset bundle creation and verification, unit tests, CPU reference tests, Vulkan parity tests, and reproducible experiment checks from the CLI and GUI service.
+A successful process exit is not proof of model correctness. Reviewers should be able to reproduce the stated claim and see what was not tested.
+
+## License status
+
+The project license is currently pending. Until a license is committed, do not assume code, documentation, logo artwork, datasets, or model artifacts are licensed for reuse.

@@ -1,0 +1,69 @@
+#version 450
+
+// unary: elementwise unary/scalar activation, fp16 in/out, fp32 compute.
+// op selected by push constant; p0/p1 are per-op scalar parameters.
+//
+//   op 0 = sigmoid : 1/(1+exp(-x))                       (cactus_sigmoid_f16)
+//   op 1 = clamp   : clamp(x, p0, p1)                    (cactus_clamp_f16)
+//   op 2 = exp     : exp(x)                              (cactus_scalar_op EXP)
+//   op 3 = cos     : cos(x)                              (cactus_scalar_op COS)
+//   op 4 = sin     : sin(x)                              (cactus_scalar_op SIN)
+//   op 5 = sqrt    : sqrt(x)                             (cactus_scalar_op SQRT)
+//   op 6 = log     : log(x)                              (cactus_scalar_op LOG)
+//   op 7 = abs     : abs(x)                              (cactus_scalar_op ABS)
+//   op 8 = pow     : pow(x, p0)                          (cactus_scalar_op POW)
+//   op 9 = relu    : max(x, 0)                           (cactus_relu_f16)
+//   op 10 = tanh   : tanh(x)                             (cactus_tanh_f16)
+//   op 11 = silu   : x / (1+exp(-x))                     (cactus_silu_f16)
+//   op 12 = softcap: p0 * tanh(x * p1 / p0)              (cactus_softcap_f16)
+//
+// M7a: PACKED fp16 in/out — 2 values per uint32 (even index = low half, odd
+// index = high half, byte-identical to fp16pack mode 1). `count` is still the
+// number of ELEMENTS. One thread per input word (2 elements), so there is never
+// a read-modify-write on the output word.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly  buffer InBuf  { uint in_data[];  };
+layout(std430, binding = 1) writeonly buffer OutBuf { uint out_data[]; };
+
+layout(push_constant) uniform PC {
+    uint op;
+    uint count; // number of ELEMENTS
+    float p0;
+    float p1;
+} pc;
+
+float apply_op(float x) {
+    switch (pc.op) {
+        case 0u:  return 1.0 / (1.0 + exp(-x));
+        case 1u:  return clamp(x, pc.p0, pc.p1);
+        case 2u:  return exp(x);
+        case 3u:  return cos(x);
+        case 4u:  return sin(x);
+        case 5u:  return sqrt(x);
+        case 6u:  return log(x);
+        case 7u:  return abs(x);
+        case 8u:  return pow(x, pc.p0);
+        case 9u:  return max(x, 0.0);
+        case 10u: return tanh(x);
+        case 11u: return x / (1.0 + exp(-x));
+        case 12u: return pc.p0 * tanh(x * pc.p1 / pc.p0);
+        default:  return x;
+    }
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x; // word index
+    uint nwords = (pc.count + 1u) / 2u;
+    if (i >= nwords) return;
+
+    uint e0 = i * 2u;
+    uint e1 = e0 + 1u;
+
+    vec2 h = unpackHalf2x16(in_data[i]);
+    float r0 = apply_op(h.x);
+    float r1 = (e1 < pc.count) ? apply_op(h.y) : 0.0;
+
+    out_data[i] = packHalf2x16(vec2(r0, r1));
+}
