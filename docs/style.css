@@ -139,12 +139,15 @@ h1 em, h2 em {
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 390px;
+  width: min(420px, 100%);
+  height: 400px;
+  max-width: 100%;
+  margin-inline: auto;
 }
 .logo-art::before {
   content: '';
   position: absolute;
-  width: min(390px, 90%);
+  width: min(360px, 86%);
   aspect-ratio: 1;
   border: 1px solid rgba(169, 116, 40, .45);
   border-radius: 50%;
@@ -153,7 +156,7 @@ h1 em, h2 em {
 .logo-art img {
   position: relative;
   display: block;
-  width: min(340px, 78%);
+  width: min(320px, 76%);
   height: auto;
   border-radius: 50%;
   box-shadow: 0 25px 70px rgba(0, 0, 0, .62), 0 0 45px rgba(169, 116, 40, .15);
@@ -213,7 +216,7 @@ h1 em, h2 em {
   .site-header { padding: 21px 0; }
   nav a:not(.nav-cta) { display: none; }
   .hero { display: block; padding-top: 70px; }
-  .logo-art { min-height: 300px; margin-top: 45px; }
+  .logo-art { width: 100%; height: 300px; margin-top: 45px; }
   .status-strip { grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 80px; }
   .status-strip div:nth-child(3) { border-left: 0; padding-left: 18px; }
   .cards, .manifesto { grid-template-columns: 1fr; }
