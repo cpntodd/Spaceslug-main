@@ -5,6 +5,7 @@
 <h1 align="center">Spaceslug</h1>
 
 <p align="center"><strong>Bringing local AI to older systems.</strong></p>
+<p align="center"><strong>And reviving old GPU's in a modern AI landscape.</strong></p>
 
 <p align="center">
   A transparent, community-built model lab and runtime for making capable local AI useful on hardware that still has life in it.
