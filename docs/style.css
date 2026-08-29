@@ -1,7 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 :root {
-  --ink: #e7dfc9;
+  --ink: #e7cc93;
+  --cream: #e9c991;
+  --highlight: #ffe194;
   --paper: #a17739;
   --muted: #b79f77;
   --line: rgba(161, 119, 57, .34);
@@ -126,8 +128,8 @@ h1 em, h2 em {
 .lede { max-width: 540px; color: var(--muted); font-size: 1.2rem; line-height: 1.6; }
 .hero-actions { display: flex; gap: 13px; margin-top: 34px; }
 .button { border-radius: 99px; padding: 14px 21px; text-decoration: none; font-weight: 600; font-size: .9rem; }
-.button.primary { background: var(--rust); color: var(--ink); }
-.button.primary:hover { background: var(--rust-bright); }
+.button.primary { background: var(--rust); color: var(--highlight); }
+.button.primary:hover { background: var(--rust-bright); color: var(--cream); }
 .button.primary span { margin-left: 18px; }
 .button.quiet { color: var(--ink); border: 1px solid var(--line); }
 .button.quiet:hover { border-color: var(--green); color: var(--green); }
@@ -165,6 +167,7 @@ h1 em, h2 em {
 
 .cards-section { padding-bottom: 135px; }
 .section-heading h2, .manifesto h2 {
+  color: var(--cream);
   font-size: clamp(2.5rem, 5vw, 4.7rem);
   line-height: .98;
   letter-spacing: -.07em;
